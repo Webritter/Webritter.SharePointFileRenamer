@@ -147,9 +147,10 @@ namespace Webritter.SharePointFileRenamer
                                         }
                                         else
                                         {
-
+                                            // other field types not supportd yet
+                                            log.Error("This field type is not supported yet!!");
+                                            return;
                                         }
-
                                     }
                                     else
                                     {
@@ -164,10 +165,25 @@ namespace Webritter.SharePointFileRenamer
                                 {
                                     string oldFileName = item["FileLeafRef"].ToString();
                                     string newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray());
-                                    item["FileLeafRef"] = newFileName;
-                                    item.Update();
-                                    ctx.ExecuteQuery();
-                                    log.Info("Renamed ''" + oldFileName + "' to '" + newFileName +"'");
+                                    if (newFileName != oldFileName)
+                                    {
+                                        item["FileLeafRef"] = newFileName;
+                                        item.Update();
+                                        ctx.ExecuteQuery();
+                                        log.Info("Renamed ''" + oldFileName + "' to '" + newFileName + "'");
+
+                                        if (!string.IsNullOrEmpty(options.StatusFieldName))
+                                        {
+                                            // try to setup status 
+                                            item[options.StatusFieldName] = options.StatusSuccessValue;
+                                            item.Update();
+                                            ctx.ExecuteQuery();
+                                        }
+                                    }
+                                    else
+                                    {
+                                        log.Warn("Skipped because filename has not changed'");
+                                    }                               
                                 }
                                 catch (Exception ex)
                                 {

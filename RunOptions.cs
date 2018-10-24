@@ -20,7 +20,13 @@ namespace Webritter.SharePointFileRenamer
         public string CamlQuery { get; set; }
         public string FileNameFormat { get; set; }
 
+
         public List<FieldOptions> FieldNames { get; set; }
+
+
+        public string StatusFieldName { get; set; }
+        public string StatusSuccessValue { get; set; }
+
 
         // constuctor
         public RunOptions()
