@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.SharePoint.Client;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -19,14 +20,16 @@ namespace Webritter.SharePointFileRenamer
         public string LibraryName { get; set; }
         public string CamlQuery { get; set; }
         public string FileNameFormat { get; set; }
-
-
         public List<FieldOptions> FieldNames { get; set; }
 
+        public string MoveTo { get; set; }
 
         public string StatusFieldName { get; set; }
         public string StatusSuccessValue { get; set; }
-
+        public string CheckinMessage { get; set; }
+        public CheckinType CheckinType { get; set; }
+        public string PublishInfo { get; set; }
+        public string ApproveInfo { get; set; }
 
         // constuctor
         public RunOptions()
@@ -58,27 +61,41 @@ namespace Webritter.SharePointFileRenamer
         {
             RunOptions sample = new RunOptions()
             {
-                SiteUrl = "http://sharepoint.webritter.tk/sites/dev",
+                SiteUrl = "https://sharepoint.identecsolutions.com/sites/WS0029",
                 Domain = "",
-                Username = "webritter",
+                Username = "identec\\communardo",
                 Password = "secret",
-                LibraryName = "Documents",
-                FileNameFormat = "Test-File-{0:5}-{1}",
-                CamlQuery = "<Where><Eq><FieldRef Name='LinkFilenameNoMenu' /><Value Type='Computed'>New Microsoft Word Document.docx </Value></Eq></Where>",
+                LibraryName = "Product Customization",
+                FileNameFormat = "PCF_{0:00000}",
+                CamlQuery = @"
+                            <Where>
+                                  <And>
+                                     <IsNull>
+                                        <FieldRef Name='identecDocumentStatus' />
+                                     </IsNull>
+                                     <Eq>
+                                        <FieldRef Name='FSObjType' />
+                                        <Value Type='Integer'>0</Value>
+                                     </Eq>
+                                  </And>
+                               </Where>",
+//                CamlQuery = "<Where><And><Eq><FieldRef Name='FileDirRef' /><Value Type='Text'>/sites/WS0029/Product Customization</Value></Eq><IsNull><FieldRef Name='identecDocumentStatus'/></IsNull></And></Where>",
                 FieldNames = new List<FieldOptions>()
                 {
                     new FieldOptions()
                     {
                         FieldName = "ID",
                         ShouldNotBeNull = true
-                    },
-
-                    new FieldOptions()
-                    {
-                        FieldName = "Title",
-                        ShouldNotBeNull = true
                     }
-                }
+                },
+
+                MoveTo = "PCF - released",
+                StatusFieldName = "identecDocumentStatus",
+                StatusSuccessValue = "Draft",
+                CheckinMessage ="File Renamed",
+                CheckinType = CheckinType.OverwriteCheckIn,
+                PublishInfo = null,
+                ApproveInfo = null
 
             };
             sample.SaveAsXml(filename);
@@ -89,6 +106,5 @@ namespace Webritter.SharePointFileRenamer
     {
         public string FieldName { get; set; }
         public bool ShouldNotBeNull { get; set; }
-        public bool IsLookup { get; set; }
     }
 }
