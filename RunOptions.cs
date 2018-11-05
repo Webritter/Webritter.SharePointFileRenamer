@@ -22,8 +22,6 @@ namespace Webritter.SharePointFileRenamer
         public string FileNameFormat { get; set; }
         public List<FieldOptions> FieldNames { get; set; }
 
-        public string MoveTo { get; set; }
-
         public string StatusFieldName { get; set; }
         public string StatusSuccessValue { get; set; }
         public string CheckinMessage { get; set; }
@@ -89,7 +87,6 @@ namespace Webritter.SharePointFileRenamer
                     }
                 },
 
-                MoveTo = "PCF - released",
                 StatusFieldName = "identecDocumentStatus",
                 StatusSuccessValue = "Draft",
                 CheckinMessage ="File Renamed",

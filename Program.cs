@@ -59,6 +59,10 @@ namespace Webritter.SharePointFileRenamer
                 return;
             }
 
+            if (!options.Enabled)
+            {
+                log.Info("Disabled by xml file");
+            }
 
             if (string.IsNullOrEmpty(options.SiteUrl))
             {
@@ -83,130 +87,161 @@ namespace Webritter.SharePointFileRenamer
                     ctx.ExecuteQuery();
                     log.Info("Succesfully authenticated as " + options.Username);
 
+                    Web web = ctx.Web;
+                    ctx.Load(web);
+
+                    User currentUser = web.CurrentUser;
+                    ctx.Load(currentUser);
+
                     List spList = ctx.Web.Lists.GetByTitle(options.LibraryName);
-                    FieldCollection fields = ctx.Web.Fields;
-
-                    var statusField = fields.GetByInternalNameOrTitle(options.StatusFieldName);
-
-                    ctx.Load(fields);
-                    ctx.Load(statusField);
                     ctx.Load(spList);
+
+                    FieldCollection fields = ctx.Web.Fields;
+                    ctx.Load(fields);
+
+                    Field statusField = null;
+                    if (!string.IsNullOrEmpty(options.StatusFieldName))
+                    {
+                        statusField = fields.GetByInternalNameOrTitle(options.StatusFieldName);
+                        ctx.Load(statusField);
+                    }
                     ctx.ExecuteQuery();
 
+                    if (spList == null)
+                    {
+                        log.Error("List not found!");
+                        return;
+                    }
+
+                    log.Info("Document library found with total " + spList.ItemCount + " docuements");
+
+                    if (spList.ItemCount == 0)
+                    {
+                        return;
+                    }
+                    // check if the status field is a taxonomy field
+                    // and try to find the correct term id in site collection
                     string statusTermId = null;
                     TaxonomyField txField = null;
-                    if (statusField.TypeAsString == "TaxonomyFieldType")
+                    if (statusField != null && statusField.TypeAsString == "TaxonomyFieldType")
                     {
                         txField = ctx.CastTo<TaxonomyField>(statusField);
                         statusTermId = TaxonomyHelpers.GetTermIdForTerm(options.StatusSuccessValue, txField.TermSetId, ctx);
+                        log.Info("StatusField to update is a taxonomy field! id found:" + statusTermId);
                     }
 
-                    log.Info("DocumentLibrary found with total " + spList.ItemCount + " docuements");
 
-                    if (spList != null && spList.ItemCount > 0)
-                    {
-                        // build viewFields
-                        string viewFields;
-                        viewFields = "<ViewFields>";
+                    // build viewFields
+                    string viewFields;
+                    viewFields = "<ViewFields>";
        
-                        foreach(var field in options.FieldNames)
+                    foreach(var field in options.FieldNames)
+                    {
+                        viewFields += "<FieldRef " +
+                            "Name='" + field.FieldName + "'" +
+                            " />";
+                    }
+                    if (!string.IsNullOrEmpty(options.StatusFieldName)) {
+                        viewFields += "<FieldRef " +
+                            "Name='" + options.StatusFieldName + "'" +
+                            " />";
+                    }
+
+                    viewFields += "</ViewFields>";
+
+                    // build caml query
+                    CamlQuery camlQuery = new CamlQuery();
+                    camlQuery.ViewXml = "<View> " +
+                                            "<Query>" +
+                                                options.CamlQuery +
+                                            "</Query>" +
+                                            viewFields +
+                                        "</View>";
+
+                    ListItemCollection listItems = spList.GetItems(camlQuery);
+                    ctx.Load(listItems);
+                    ctx.ExecuteQuery();
+
+                    log.Info("found " +listItems.Count + " documents to check");
+
+
+                    foreach (var item in listItems)
+                    {
+                        log.Info("Checking '" + item["FileLeafRef"] + "' ....");
+                        bool skip = false;
+                        if (item.FileSystemObjectType == FileSystemObjectType.File)
                         {
-                            viewFields += "<FieldRef " +
-                                "Name='" + field.FieldName + "'" +
-                                " />";
-                        }
-                        if (!string.IsNullOrEmpty(options.StatusFieldName)) {
-                            viewFields += "<FieldRef " +
-                                "Name='" + options.StatusFieldName + "'" +
-                                " />";
-                        }
-
-                        viewFields += "</ViewFields>";
-
-                        // build caml query
-                        CamlQuery camlQuery = new CamlQuery();
-                        camlQuery.ViewXml = "<View> " +
-                                                "<Query>" +
-                                                    options.CamlQuery +
-                                                "</Query>" +
-                                                viewFields +
-                                            "</View>";
-
-                        ListItemCollection listItems = spList.GetItems(camlQuery);
-                        ctx.Load(listItems);
-                        ctx.ExecuteQuery();
-
-                        log.Info("found " +listItems.Count + " documents to check");
-
-
-                        foreach (var item in listItems)
-                        {
-                            log.Info("Checking '" + item["FileLeafRef"] + "' ....");
-                            bool skip = false;
-                            if (item.FileSystemObjectType == FileSystemObjectType.File)
+                            List<object> fieldValues = new List<object>();
+                            foreach (var field in options.FieldNames)
                             {
-                                List<object> fieldValues = new List<object>();
-                                foreach (var field in options.FieldNames)
+                                object fieldValue = null;
+                                if (item[field.FieldName] != null) 
                                 {
-                                    object fieldValue = null;
-                                    if (item[field.FieldName] != null) 
+                                    // try to get a good field value
+                                    if (item[field.FieldName] is TaxonomyFieldValue)
                                     {
-                                        // try to get a good field value
-                                        if (item[field.FieldName] is TaxonomyFieldValue)
-                                        {
-                                            // this field is a single taxonomy field
-                                            var taxValue = TaxonomyHelpers.GetTaxonomyFieldValue(item, field.FieldName);
-                                            fieldValue = taxValue.Label;
-                                        }
-                                        else if (item[field.FieldName] is TaxonomyFieldValueCollection)
-                                        {
-                                            // this field is a multi taxonomy field
-                                            var taxValues = TaxonomyHelpers.GetTaxonomyFieldValueCollection(item, field.FieldName);
-                                            if (taxValues.Count > 0)
-                                            {
-                                                // join all labels with comma
-                                                fieldValue = string.Join(",", taxValues.Select(v => v.Label));
-                                            }
-                                        }
-                                        else if (item[field.FieldName] is FieldUrlValue)
-                                        {
-                                            var urlValue = item[field.FieldName] as FieldUrlValue;
-                                            fieldValue = urlValue.Description;
-                                        }
-                                        else if (item[field.FieldName] is FieldUserValue)
-                                        {
-                                            var usrValue = item[field.FieldName] as FieldUserValue;
-                                            fieldValue = usrValue.LookupValue;
-                                        }
-                                        else if (IsDictionary(item[field.FieldName]))
-                                        {
-                                            // other field types not supportd yet
-                                            log.Error("This field type is not supported yet!!");
-                                            return;
-                                        }
-                                        else
-                                        {
-                                            fieldValue = item[field.FieldName];
-                                        }
-
+                                        // this field is a single taxonomy field
+                                        var taxValue = TaxonomyHelpers.GetTaxonomyFieldValue(item, field.FieldName);
+                                        fieldValue = taxValue.Label;
                                     }
-                                    fieldValues.Add(fieldValue);
-                                    if (fieldValue == null)
+                                    else if (item[field.FieldName] is TaxonomyFieldValueCollection)
                                     {
-                                        // the content of the field is null
-                                        if (field.ShouldNotBeNull)
+                                        // this field is a multi taxonomy field
+                                        var taxValues = TaxonomyHelpers.GetTaxonomyFieldValueCollection(item, field.FieldName);
+                                        if (taxValues.Count > 0)
                                         {
-                                            skip = true;
-                                            log.Warn("Skipped because '" + field.FieldName + "' is null");
-                                            break;
+                                            // join all labels with comma
+                                            fieldValue = string.Join(",", taxValues.Select(v => v.Label));
                                         }
+                                    }
+                                    else if (item[field.FieldName] is FieldUrlValue)
+                                    {
+                                        var urlValue = item[field.FieldName] as FieldUrlValue;
+                                        fieldValue = urlValue.Description;
+                                    }
+                                    else if (item[field.FieldName] is FieldUserValue)
+                                    {
+                                        var usrValue = item[field.FieldName] as FieldUserValue;
+                                        fieldValue = usrValue.LookupValue;
+                                    }
+                                    else if (IsDictionary(item[field.FieldName]))
+                                    {
+                                        // other field types not supportd yet
+                                        log.Error("This field type is not supported yet!!");
+                                        return;
+                                    }
+                                    else
+                                    {
+                                        fieldValue = item[field.FieldName];
+                                    }
+
+                                }
+                                fieldValues.Add(fieldValue);
+                                if (fieldValue == null)
+                                {
+                                    // the content of the field is null
+                                    if (field.ShouldNotBeNull)
+                                    {
+                                        skip = true;
+                                        log.Warn("Skipped because '" + field.FieldName + "' is null");
+                                        break;
                                     }
                                 }
-                                if (!skip)
+                            }
+                            string fileName = null;
+                            string newFileName = null;
+                            if (!skip)
+                            {
+                                try
                                 {
-                                    try
+                                    // format new file name
+                                    fileName = item["FileLeafRef"].ToString();
+                                    string extension = System.IO.Path.GetExtension(fileName);
+                                    newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray()) + extension;
+                                    // replace illegal characters
+                                    newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
+                                    if (newFileName != fileName)
                                     {
-                                        string fileName = item["FileLeafRef"].ToString();
                                         #region checkout
                                         bool hasCheckedOut = false;
                                         if (spList.ForceCheckout)
@@ -216,140 +251,140 @@ namespace Webritter.SharePointFileRenamer
                                                 item.File.CheckOut();
                                                 ctx.ExecuteQuery();
                                                 hasCheckedOut = true;
-                                                log.Info("Checked out: ''" + fileName + "'" );
+                                                log.Info("Checked out: ''" + fileName + "'");
                                             }
                                             catch (Exception ex)
                                             {
-                                                log.Warn("Skipped because item is checked out by another user'");
-                                                continue;
+                                                // check if checked out by me
+                                                User checkedOutBy = item.File.CheckedOutByUser;
+                                                ctx.Load(checkedOutBy);
+                                                ctx.ExecuteQuery();
+                                                if (checkedOutBy.Id != currentUser.Id)
+                                                {
+                                                    log.Warn("Skipped because item is checked out by another user'");
+                                                    continue;
+                                                }
+                                                // leave hasCheckedOu on false, because changes was made
+                                                // by the sema user as script is running.
+                                                //hasCheckedOut = true;
+                                                log.Info("File was checked out by me: ''" + fileName + "'");
                                             }
                                         }
                                         #endregion
                                         #region rename file
-                                        string extension = System.IO.Path.GetExtension(fileName);
-                                        string newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray()) + extension;
-                                        if (newFileName != fileName)
+                                        try
                                         {
                                             item["FileLeafRef"] = newFileName;
                                             item.Update();
                                             ctx.ExecuteQuery();
-                                            log.Info("Renamed ''" + fileName + "' to '" + newFileName + "'");
+                                            log.Info("Renamed '" + fileName + "' to '" + newFileName + "'");
                                             fileName = newFileName;
-                                        }
-                                        #endregion
-                                        #region update status
-                                        if (!string.IsNullOrEmpty(options.StatusFieldName))
-                                        {
-                                                
-                                            if (statusTermId != null)
+
+                                            #endregion
+                                            #region update status
+                                            if (!string.IsNullOrEmpty(options.StatusFieldName))
                                             {
-                                                // status field is a taxonomy field
-                                                // try to set the taxonomy field
-                                                TaxonomyFieldValue termValue = null;
-                                                TaxonomyFieldValueCollection termValues = null;
 
-                                                string termValueString = string.Empty;
-
-                                                if (txField.AllowMultipleValues)
+                                                if (statusTermId != null)
                                                 {
+                                                    // status field is a taxonomy field
+                                                    // try to set the taxonomy field
+                                                    TaxonomyFieldValue termValue = null;
+                                                    TaxonomyFieldValueCollection termValues = null;
 
-                                                    termValues = item[options.StatusFieldName] as TaxonomyFieldValueCollection;
-                                                    foreach (TaxonomyFieldValue tv in termValues)
+                                                    string termValueString = string.Empty;
+
+                                                    if (txField.AllowMultipleValues)
                                                     {
-                                                        termValueString += tv.WssId + ";#" + tv.Label + "|" + tv.TermGuid + ";#";
+                                                        // multi value taxonomy field as status field
+                                                        // 
+                                                        termValues = item[options.StatusFieldName] as TaxonomyFieldValueCollection;
+                                                        bool found = false;
+                                                        foreach (TaxonomyFieldValue tv in termValues)
+                                                        {
+                                                            found = found ||  tv.TermGuid == statusTermId;
+                                                            termValueString += tv.WssId + ";#" + tv.Label + "|" + tv.TermGuid + ";#";
+                                                        }
+
+                                                        if (!found)
+                                                        {
+                                                            // add the new status at the end of all values
+                                                            termValueString += "-1;#" + options.StatusSuccessValue + "|" + statusTermId;
+                                                            termValues = new TaxonomyFieldValueCollection(ctx, termValueString, txField);
+                                                            txField.SetFieldValueByValueCollection(item, termValues);
+                                                        }
                                                     }
-
-                                                    termValueString += "-1;#" + options.StatusSuccessValue + "|" + statusTermId;
-                                                    termValues = new TaxonomyFieldValueCollection(ctx, termValueString, txField);
-                                                    txField.SetFieldValueByValueCollection(item, termValues);
-
+                                                    else
+                                                    {
+                                                        // single value taxonomy field
+                                                        termValue = new TaxonomyFieldValue();
+                                                        termValue.Label = options.StatusSuccessValue;
+                                                        termValue.TermGuid = statusTermId;
+                                                        termValue.WssId = -1;
+                                                        txField.SetFieldValueByValue(item, termValue);
+                                                    }
                                                 }
                                                 else
                                                 {
-                                                    termValue = new TaxonomyFieldValue();
-                                                    termValue.Label = options.StatusSuccessValue;
-                                                    termValue.TermGuid = statusTermId;
-                                                    termValue.WssId = -1;
-                                                    txField.SetFieldValueByValue(item, termValue);
+                                                    // try to setup status as text field 
+                                                    item[options.StatusFieldName] = options.StatusSuccessValue;
                                                 }
+                                                // update status in item
+                                                item.Update();
+                                                ctx.ExecuteQuery();
+                                                log.Info("status updated: ''" + options.StatusFieldName + "' to '" + options.StatusSuccessValue + "'");
                                             }
-                                            else
+                                            #endregion
+                                            #region checkin
+                                            if (hasCheckedOut)
                                             {
-                                                // try to setup status 
-                                                item[options.StatusFieldName] = options.StatusSuccessValue;
-
+                                                item.File.CheckIn(options.CheckinMessage, options.CheckinType);
+                                                ctx.ExecuteQuery();
+                                                log.Info("Checked in: ''" + newFileName + "'");
                                             }
-                                            // update status in item
-                                            item.Update();
-                                            ctx.ExecuteQuery();
-                                            log.Info("status updated: ''" + options.StatusFieldName + "' to '"+ options.StatusSuccessValue + "'");
-                                        }
-                                        #endregion
-                                        #region checkin
-                                        if (hasCheckedOut)
-                                        {
-                                            item.File.CheckIn(options.CheckinMessage, options.CheckinType);
-                                            ctx.ExecuteQuery();
-                                            log.Info("Checked in: ''" + newFileName + "'");
-                                        }
-                                        #endregion
-                                        #region move
-                                        if (!string.IsNullOrEmpty(options.MoveTo))
-                                        {
-                                            File file = item.File;
-                                            ctx.Load(file);
-                                            ctx.ExecuteQuery();
-                                            string currentPath = file.ServerRelativeUrl.ToString();
-                                            string newPath = options.MoveTo;
-                                            if (!newPath.StartsWith("/"))
+                                            #endregion
+                                            #region publish
+                                            if (!string.IsNullOrEmpty(options.PublishInfo))
                                             {
-                                                // new path is a sub folder
-                                                newPath = currentPath.Replace(newFileName, "") + options.MoveTo + "/" + newFileName;
+                                                item.File.Publish(options.PublishInfo);
+                                                ctx.ExecuteQuery();
+                                                log.Info("Published: ''" + newFileName + "'");
                                             }
-                                            else
+                                            #endregion
+                                            #region approve
+                                            if (!string.IsNullOrEmpty(options.ApproveInfo))
                                             {
-                                                // new path is server relative
-                                                newPath += "/" + newFileName;
+                                                item.File.Approve(options.ApproveInfo);
+                                                ctx.ExecuteQuery();
+                                                log.Info("Approved: ''" + newFileName + "'");
                                             }
-                                            file.MoveTo(newPath, MoveOperations.Overwrite);
-                                            ctx.ExecuteQuery();
-                                            log.Info("Moved ''" + item["FileLeafRef"] + "' to '" + options.MoveTo + "'");
-
+                                            #endregion
                                         }
-                                        #endregion
-                                        #region publish
-                                        if (!string.IsNullOrEmpty(options.PublishInfo))
+                                        catch(Exception ex)
                                         {
-                                            item.File.Publish(options.PublishInfo);
-                                            ctx.ExecuteQuery();
-                                            log.Info("Published: ''" + newFileName + "'");
+                                            log.Error("Error renaiming File", ex);
                                         }
-                                        #endregion
-                                        #region approve
-                                        if (!string.IsNullOrEmpty(options.ApproveInfo))
-                                        {
-                                            item.File.Approve(options.ApproveInfo);
-                                            ctx.ExecuteQuery();
-                                            log.Info("Approved: ''" + newFileName + "'");
-                                        }
-                                        #endregion
-                                    }
-                                    catch (Exception ex)
+                                    } else
                                     {
-                                        log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
+                                        log.Info("Skipped because filename is not to change!");
                                     }
                                 }
-
+                                catch (Exception ex)
+                                {
+                                    log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
+                                }
                             }
-                            else
-                            {
-                                // this is not a file
-                                log.Warn("Skipped because this is not a file!");
-                            }
-                           
+                             
                         }
-                        
+                        else
+                        {
+                            // this is not a file
+                            log.Warn("Skipped because this is not a file!");
+                        }
+                           
                     }
+                        
+                    
 
                 }
             }
@@ -358,6 +393,7 @@ namespace Webritter.SharePointFileRenamer
                 Console.WriteLine("Exception : " + ex.Message);
             }
 
+            log.Info("Programm ended");
 
             return;
 
