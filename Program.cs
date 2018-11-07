@@ -10,6 +10,7 @@ using System.Collections;
 using System.Collections.ObjectModel;
 using Microsoft.SharePoint.Client.Taxonomy;
 using System.Globalization;
+using Microsoft.SharePoint.Workflow;
 
 namespace Webritter.SharePointFileRenamer
 {
@@ -20,6 +21,7 @@ namespace Webritter.SharePointFileRenamer
         static void Main(string[] args)
         {
             log.Info("Programm started ");
+            #region check parameter file
             if (args.Count() != 1)
             {
                 Console.WriteLine("Missing Parameter: optionXmlFile");
@@ -62,6 +64,7 @@ namespace Webritter.SharePointFileRenamer
             if (!options.Enabled)
             {
                 log.Info("Disabled by xml file");
+                return;
             }
 
             if (string.IsNullOrEmpty(options.SiteUrl))
@@ -71,7 +74,7 @@ namespace Webritter.SharePointFileRenamer
                 log.Error(message);
                 return;
             }
-
+            #endregion
             //Get instance of Authentication Manager  
             AuthenticationManager authenticationManager = new AuthenticationManager();
             //Create authentication array for site url,User Name,Password and Domain  
@@ -119,6 +122,14 @@ namespace Webritter.SharePointFileRenamer
                     {
                         return;
                     }
+
+                    WorkflowRepository workflowRep = null;
+                    // check if there is a workflow to start
+                    if (!string.IsNullOrEmpty(options.WorkflowName)) 
+                    {
+                        workflowRep = new WorkflowRepository(ctx);
+                    }
+
                     // check if the status field is a taxonomy field
                     // and try to find the correct term id in site collection
                     string statusTermId = null;
@@ -171,51 +182,11 @@ namespace Webritter.SharePointFileRenamer
                         bool skip = false;
                         if (item.FileSystemObjectType == FileSystemObjectType.File)
                         {
+                            #region get field values
                             List<object> fieldValues = new List<object>();
                             foreach (var field in options.FieldNames)
                             {
-                                object fieldValue = null;
-                                if (item[field.FieldName] != null) 
-                                {
-                                    // try to get a good field value
-                                    if (item[field.FieldName] is TaxonomyFieldValue)
-                                    {
-                                        // this field is a single taxonomy field
-                                        var taxValue = TaxonomyHelpers.GetTaxonomyFieldValue(item, field.FieldName);
-                                        fieldValue = taxValue.Label;
-                                    }
-                                    else if (item[field.FieldName] is TaxonomyFieldValueCollection)
-                                    {
-                                        // this field is a multi taxonomy field
-                                        var taxValues = TaxonomyHelpers.GetTaxonomyFieldValueCollection(item, field.FieldName);
-                                        if (taxValues.Count > 0)
-                                        {
-                                            // join all labels with comma
-                                            fieldValue = string.Join(",", taxValues.Select(v => v.Label));
-                                        }
-                                    }
-                                    else if (item[field.FieldName] is FieldUrlValue)
-                                    {
-                                        var urlValue = item[field.FieldName] as FieldUrlValue;
-                                        fieldValue = urlValue.Description;
-                                    }
-                                    else if (item[field.FieldName] is FieldUserValue)
-                                    {
-                                        var usrValue = item[field.FieldName] as FieldUserValue;
-                                        fieldValue = usrValue.LookupValue;
-                                    }
-                                    else if (IsDictionary(item[field.FieldName]))
-                                    {
-                                        // other field types not supportd yet
-                                        log.Error("This field type is not supported yet!!");
-                                        return;
-                                    }
-                                    else
-                                    {
-                                        fieldValue = item[field.FieldName];
-                                    }
-
-                                }
+                                object fieldValue = GetFieldValueAsIntOrString(item, field.FieldName);                                                             
                                 fieldValues.Add(fieldValue);
                                 if (fieldValue == null)
                                 {
@@ -228,63 +199,113 @@ namespace Webritter.SharePointFileRenamer
                                     }
                                 }
                             }
-                            string fileName = null;
+                            #endregion
+                            string currentFileName = null;
                             string newFileName = null;
                             if (!skip)
                             {
                                 try
                                 {
-                                    // format new file name
-                                    fileName = item["FileLeafRef"].ToString();
-                                    string extension = System.IO.Path.GetExtension(fileName);
+                                    // find current and new file name
+                                    currentFileName = item["FileLeafRef"].ToString();
+                                    string extension = System.IO.Path.GetExtension(currentFileName);
                                     newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray()) + extension;
                                     // replace illegal characters
                                     newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
-                                    if (newFileName != fileName)
+
+                                    // get current and new path
+                                    ctx.Load(item.File);
+                                    ctx.ExecuteQuery();
+                                    string currentPath = item.File.ServerRelativeUrl.ToString().Replace("/" + currentFileName, "");
+                                    string newPath = currentPath;
+                                    if (!string.IsNullOrEmpty(options.MoveTo))
                                     {
-                                        #region checkout
-                                        bool hasCheckedOut = false;
-                                        if (spList.ForceCheckout)
+                                        if (!options.MoveTo.StartsWith("/"))
                                         {
-                                            try
-                                            {
-                                                item.File.CheckOut();
-                                                ctx.ExecuteQuery();
-                                                hasCheckedOut = true;
-                                                log.Info("Checked out: ''" + fileName + "'");
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                // check if checked out by me
-                                                User checkedOutBy = item.File.CheckedOutByUser;
-                                                ctx.Load(checkedOutBy);
-                                                ctx.ExecuteQuery();
-                                                if (checkedOutBy.Id != currentUser.Id)
-                                                {
-                                                    log.Warn("Skipped because item is checked out by another user'");
-                                                    continue;
-                                                }
-                                                // leave hasCheckedOu on false, because changes was made
-                                                // by the sema user as script is running.
-                                                //hasCheckedOut = true;
-                                                log.Info("File was checked out by me: ''" + fileName + "'");
-                                            }
+                                            // new path is a sub folder
+                                            newPath = currentPath + "/" + options.MoveTo;
                                         }
-                                        #endregion
-                                        #region rename file
+                                        else
+                                        {
+                                            // new path is server relative
+                                            newPath = options.MoveTo;
+                                        }
+                                    }
+
+                                    // get current and new status
+                                    string currentStatus = null;
+                                    string newStatus = null;
+                                    if(!string.IsNullOrEmpty(options.StatusFieldName))
+                                    {
+                                        var val = GetFieldValueAsIntOrString(item, options.StatusFieldName);
+                                        currentStatus = (val != null) ? val.ToString() : "";
+                                        newStatus = options.StatusSuccessValue;
+                                    }
+
+
+
+                                    if (newFileName != currentFileName || newPath != currentPath || newStatus != currentStatus)
+                                    {
+                                        // there s something todo with the file!! 
+
                                         try
                                         {
-                                            item["FileLeafRef"] = newFileName;
-                                            item.Update();
-                                            ctx.ExecuteQuery();
-                                            log.Info("Renamed '" + fileName + "' to '" + newFileName + "'");
-                                            fileName = newFileName;
+                                            bool hasCheckedOut = false;
+                                            #region checkout
+
+                                            if (spList.ForceCheckout)
+                                            {
+                                                try
+                                                {
+                                                    item.File.CheckOut();
+                                                    ctx.ExecuteQuery();
+                                                    hasCheckedOut = true;
+                                                    log.Info("Checked out: ''" + currentFileName + "'");
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    // check if checked out by me
+                                                    User checkedOutBy = item.File.CheckedOutByUser;
+                                                    ctx.Load(checkedOutBy);
+                                                    ctx.ExecuteQuery();
+                                                    if (checkedOutBy.Id != currentUser.Id)
+                                                    {
+                                                        log.Warn("Skipped because item is checked out by another user'");
+                                                        continue;
+                                                    }
+                                                    // leave hasCheckedOu on false, because changes was made
+                                                    // by the sema user as script is running.
+                                                    //hasCheckedOut = true;
+                                                    log.Info("File was checked out by me: ''" + currentFileName + "'");
+                                                }
+                                            }
 
                                             #endregion
-                                            #region update status
-                                            if (!string.IsNullOrEmpty(options.StatusFieldName))
-                                            {
 
+                                            #region rename or move file
+                                            if (newPath != currentPath)
+                                            {
+                                                // move the file
+                                                item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
+                                                ctx.ExecuteQuery();
+                                                log.Info("Moved ''" + item["FileLeafRef"] + "' to '" + options.MoveTo + "'");
+                                            }
+                                            else if (newFileName != currentFileName)
+                                            {
+                                                // rename the file
+                                                item["FileLeafRef"] = newFileName;
+                                                item.Update();
+                                                ctx.ExecuteQuery();
+                                                log.Info("Renamed '" + currentFileName + "' to '" + newFileName + "'");
+
+                                            }
+                                
+                                            #endregion
+                                            #region update status
+
+                                            if (newStatus != currentStatus)
+                                            {
+                                                // update status in item
                                                 if (statusTermId != null)
                                                 {
                                                     // status field is a taxonomy field
@@ -296,13 +317,13 @@ namespace Webritter.SharePointFileRenamer
 
                                                     if (txField.AllowMultipleValues)
                                                     {
+
                                                         // multi value taxonomy field as status field
-                                                        // 
                                                         termValues = item[options.StatusFieldName] as TaxonomyFieldValueCollection;
                                                         bool found = false;
                                                         foreach (TaxonomyFieldValue tv in termValues)
                                                         {
-                                                            found = found ||  tv.TermGuid == statusTermId;
+                                                            found = found || tv.TermGuid == statusTermId;
                                                             termValueString += tv.WssId + ";#" + tv.Label + "|" + tv.TermGuid + ";#";
                                                         }
 
@@ -316,9 +337,10 @@ namespace Webritter.SharePointFileRenamer
                                                     }
                                                     else
                                                     {
+                                                       
                                                         // single value taxonomy field
                                                         termValue = new TaxonomyFieldValue();
-                                                        termValue.Label = options.StatusSuccessValue;
+                                                        termValue.Label = newStatus;
                                                         termValue.TermGuid = statusTermId;
                                                         termValue.WssId = -1;
                                                         txField.SetFieldValueByValue(item, termValue);
@@ -327,48 +349,80 @@ namespace Webritter.SharePointFileRenamer
                                                 else
                                                 {
                                                     // try to setup status as text field 
-                                                    item[options.StatusFieldName] = options.StatusSuccessValue;
+                                                    item[options.StatusFieldName] = newStatus;
                                                 }
-                                                // update status in item
                                                 item.Update();
                                                 ctx.ExecuteQuery();
-                                                log.Info("status updated: ''" + options.StatusFieldName + "' to '" + options.StatusSuccessValue + "'");
+                                                log.Info("Updated:'" + options.StatusFieldName + "' from '" + currentStatus +  "' to '" + newStatus + "'");
+
+
+
                                             }
                                             #endregion
-                                            #region checkin
+                                            #region update version
+                                            #endregion
+
                                             if (hasCheckedOut)
                                             {
-                                                item.File.CheckIn(options.CheckinMessage, options.CheckinType);
-                                                ctx.ExecuteQuery();
-                                                log.Info("Checked in: ''" + newFileName + "'");
+                                                #region checkin
+                                                if (hasCheckedOut)
+                                                {
+                                                    var realoadedItem = spList.GetItemById(item.Id);
+                                                    realoadedItem.File.CheckIn(options.CheckinMessage, options.CheckinType);
+                                                    ctx.ExecuteQuery();
+                                                    log.Info("Checked in: ''" + newFileName + "'");
+                                                }
+                                                #endregion
+                                                #region publish
+                                                if (!string.IsNullOrEmpty(options.PublishInfo))
+                                                {
+                                                    var realoadedItem = spList.GetItemById(item.Id);
+                                                    realoadedItem.File.Publish(options.PublishInfo);
+                                                    ctx.ExecuteQuery();
+                                                    log.Info("Published: ''" + newFileName + "'");
+                                                }
+                                                #endregion
+                                                #region approve
+                                                if (!string.IsNullOrEmpty(options.ApproveInfo))
+                                                {
+                                                    var realoadedItem = spList.GetItemById(item.Id);
+                                                    realoadedItem.File.Approve(options.ApproveInfo);
+                                                    ctx.ExecuteQuery();
+                                                    log.Info("Approved: ''" + newFileName + "'");
+                                                }
+                                                #endregion
+                                                #region workflow
+                                                if (!string.IsNullOrEmpty(options.WorkflowName))
+                                                {
+
+                                                   
+
+                                                    var realoadedItem = spList.GetItemById(item.Id);
+                                                    ctx.Load(realoadedItem);
+                                                    ctx.ExecuteQuery();
+                                                    workflowRep.RunListWorkflow45(realoadedItem.Id, options.WorkflowName, null);
+
+                                                }
+                                                #endregion
                                             }
-                                            #endregion
-                                            #region publish
-                                            if (!string.IsNullOrEmpty(options.PublishInfo))
-                                            {
-                                                item.File.Publish(options.PublishInfo);
-                                                ctx.ExecuteQuery();
-                                                log.Info("Published: ''" + newFileName + "'");
-                                            }
-                                            #endregion
-                                            #region approve
-                                            if (!string.IsNullOrEmpty(options.ApproveInfo))
-                                            {
-                                                item.File.Approve(options.ApproveInfo);
-                                                ctx.ExecuteQuery();
-                                                log.Info("Approved: ''" + newFileName + "'");
-                                            }
-                                            #endregion
+
+
+
                                         }
-                                        catch(Exception ex)
+                                        catch (Exception ex)
                                         {
-                                            log.Error("Error renaiming File", ex);
+                                            log.Error("Error renaiming or moving file", ex);
                                         }
-                                    } else
-                                    {
-                                        log.Info("Skipped because filename is not to change!");
+
+
                                     }
-                                }
+                                    else
+                                    {
+                                        log.Info("Skipped because filename or path is not to change!");
+                                    }
+
+ 
+                               }
                                 catch (Exception ex)
                                 {
                                     log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
@@ -425,6 +479,52 @@ namespace Webritter.SharePointFileRenamer
                    o.GetType().GetGenericTypeDefinition().IsAssignableFrom(typeof(Dictionary<,>));
         }
 
+        private static object GetFieldValueAsIntOrString(ListItem item, string fieldName)
+        {
+            object fieldValue = null;
+            if (item[fieldName] != null)
+            {
+                // try to get a good field value
+                if (item[fieldName] is TaxonomyFieldValue)
+                {
+                    // this field is a single taxonomy field
+                    var taxValue = TaxonomyHelpers.GetTaxonomyFieldValue(item, fieldName);
+                    fieldValue = taxValue.Label;
+                }
+                else if (item[fieldName] is TaxonomyFieldValueCollection)
+                {
+                    // this field is a multi taxonomy field
+                    var taxValues = TaxonomyHelpers.GetTaxonomyFieldValueCollection(item, fieldName);
+                    if (taxValues.Count > 0)
+                    {
+                        // join all labels with comma
+                        fieldValue = string.Join(",", taxValues.Select(v => v.Label));
+                    }
+                }
+                else if (item[fieldName] is FieldUrlValue)
+                {
+                    var urlValue = item[fieldName] as FieldUrlValue;
+                    fieldValue = urlValue.Description;
+                }
+                else if (item[fieldName] is FieldUserValue)
+                {
+                    var usrValue = item[fieldName] as FieldUserValue;
+                    fieldValue = usrValue.LookupValue;
+                }
+                else if (IsDictionary(item[fieldName]))
+                {
+                    // other field types not supportd yet
+                    log.Error("This field type is not supported yet!!");
+
+                }
+                else
+                {
+                    fieldValue = item[fieldName];
+                }
+
+            }
+            return fieldValue;
+        }
 
 
 

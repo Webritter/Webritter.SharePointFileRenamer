@@ -138,5 +138,35 @@ namespace Webritter.SharePointFileRenamer
             return termId;
 
         }
+
+        public static string GetTaxonomyFieldLabel(this ListItem item, string internalFieldName)
+        {
+            if (item == null) throw new ArgumentNullException("item");
+            if (internalFieldName == null) throw new ArgumentNullException("internalFieldName");
+
+            if (!item.FieldValues.ContainsKey(internalFieldName))
+            {
+                throw new ArgumentException(string.Format("The field '{0}' does not exist.", internalFieldName), "internalFieldName");
+            }
+
+            var value = item[internalFieldName];
+            var taxonomyFieldValue = value as TaxonomyFieldValue;
+            if (taxonomyFieldValue != null)
+            {
+                return taxonomyFieldValue.Label;
+            }
+
+            var dictionary = value as Dictionary<string, object>;
+            if (dictionary != null)
+            {
+                var val = ConvertDictionaryToTaxonomyFieldValue(dictionary);
+                return val.Label;
+            }
+
+            throw new InvalidOperationException(
+                string.Format(
+                    "Could not convert value of field '{0}' to a taxonomy vield value. Value is neither a TaxonomyFieldValue nor a Dictionary",
+                    internalFieldName));
+        }
     }
 }
