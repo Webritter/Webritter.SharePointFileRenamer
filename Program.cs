@@ -11,6 +11,7 @@ using System.Collections.ObjectModel;
 using Microsoft.SharePoint.Client.Taxonomy;
 using System.Globalization;
 using Microsoft.SharePoint.Workflow;
+using Microsoft.SharePoint.Client.WorkflowServices;
 
 namespace Webritter.SharePointFileRenamer
 {
@@ -44,8 +45,7 @@ namespace Webritter.SharePointFileRenamer
             string xmlFileName = args[0];
             if (!System.IO.File.Exists(xmlFileName))
             {
-                Console.WriteLine("File does not exist: " + xmlFileName);
-                log.Error("File does not exist: " + xmlFileName);
+               log.Error("File does not exist: " + xmlFileName);
                 return;
             }
 
@@ -56,7 +56,6 @@ namespace Webritter.SharePointFileRenamer
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Can't read and validate xmlFile: " + xmlFileName);
                 log.Error("Can't read and validate xmlFile: " + xmlFileName);
                 return;
             }
@@ -69,9 +68,7 @@ namespace Webritter.SharePointFileRenamer
 
             if (string.IsNullOrEmpty(options.SiteUrl))
             {
-                string message = "Missing SiteUrl in xmlFile: " + xmlFileName;
-                Console.WriteLine(message);
-                log.Error(message);
+                log.Error("Missing SiteUrl in xmlFile: " + xmlFileName);
                 return;
             }
             #endregion
@@ -99,16 +96,69 @@ namespace Webritter.SharePointFileRenamer
                     List spList = ctx.Web.Lists.GetByTitle(options.LibraryName);
                     ctx.Load(spList);
 
+
+
+                    // loading all field definitions from sharepoint
                     FieldCollection fields = ctx.Web.Fields;
                     ctx.Load(fields);
 
-                    Field statusField = null;
-                    if (!string.IsNullOrEmpty(options.StatusFieldName))
+                    // try to get all static uptade field values
+                    List<FieldInfo> updateFields = new List<FieldInfo>();
+                    foreach (var field in options.UpdateFields)
                     {
-                        statusField = fields.GetByInternalNameOrTitle(options.StatusFieldName);
-                        ctx.Load(statusField);
+                        var fieldInfo = new FieldInfo();
+                        fieldInfo.SpField = fields.GetByInternalNameOrTitle(field.FieldName);
+                        // get the formating info for the new Value
+                        fieldInfo.Format = field.Format;
+                        fieldInfo.IsStaticValue = !field.Format.Contains("{");
+
+                        ctx.Load(fieldInfo.SpField);
+                        updateFields.Add(fieldInfo);
                     }
+  
                     ctx.ExecuteQuery();
+
+                    // Prepare static new values
+                    foreach (var field in updateFields)
+                    {
+                        if (field.IsStaticValue)
+                        {
+                            if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
+                            {
+                                var txField = ctx.CastTo<TaxonomyField>(field.SpField);
+                                if (txField.AllowMultipleValues)
+                                {
+                                    log.Error("update of multiple value taxonomy fields not supported jet");
+                                    return;
+                                }
+                                var statusTermId = TaxonomyHelpers.GetTermIdForTerm(field.Format, txField.TermSetId, ctx);
+                                log.Info("field to update is a taxonomy field! id found:" + statusTermId);
+                                if (statusTermId != null)
+                                {
+                                    field.NewValue = new TaxonomyFieldValue() {
+                                        Label = field.Format,
+                                        TermGuid = statusTermId,
+                                        WssId = -1
+                                    };
+                                    // new vaue to compare with current value as string is static 
+                                    field.NewValueAsString = field.Format;
+                                }
+                                else
+                                {
+                                    field.NewValueAsString = field.Format;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
+                            {
+                                log.Error("Dynamic field values in taxonomy field not supportede jet!");
+                                return;
+                            }
+                        }
+                        
+                    }
 
                     if (spList == null)
                     {
@@ -123,46 +173,39 @@ namespace Webritter.SharePointFileRenamer
                         return;
                     }
 
+
                     WorkflowRepository workflowRep = null;
                     // check if there is a workflow to start
                     if (!string.IsNullOrEmpty(options.WorkflowName)) 
                     {
-                        workflowRep = new WorkflowRepository(ctx);
+                        workflowRep = new WorkflowRepository(ctx, spList.Id);
                     }
-
-                    // check if the status field is a taxonomy field
-                    // and try to find the correct term id in site collection
-                    string statusTermId = null;
-                    TaxonomyField txField = null;
-                    if (statusField != null && statusField.TypeAsString == "TaxonomyFieldType")
-                    {
-                        txField = ctx.CastTo<TaxonomyField>(statusField);
-                        statusTermId = TaxonomyHelpers.GetTermIdForTerm(options.StatusSuccessValue, txField.TermSetId, ctx);
-                        log.Info("StatusField to update is a taxonomy field! id found:" + statusTermId);
-                    }
-
 
                     // build viewFields
                     string viewFields;
                     viewFields = "<ViewFields>";
        
-                    foreach(var field in options.FieldNames)
+                    foreach(var field in options.QueryFields)
                     {
                         viewFields += "<FieldRef " +
                             "Name='" + field.FieldName + "'" +
                             " />";
                     }
-                    if (!string.IsNullOrEmpty(options.StatusFieldName)) {
+                    foreach (var field in options.UpdateFields)
+                    {
                         viewFields += "<FieldRef " +
-                            "Name='" + options.StatusFieldName + "'" +
+                            "Name='" + field.FieldName + "'" +
                             " />";
                     }
 
                     viewFields += "</ViewFields>";
 
+                    string scope = (!string.IsNullOrEmpty(options.Scope)) ? " Scope='" + options.Scope + "' " : "";
+ 
                     // build caml query
                     CamlQuery camlQuery = new CamlQuery();
-                    camlQuery.ViewXml = "<View> " +
+                    
+                    camlQuery.ViewXml = "<View "+ scope + " > " +
                                             "<Query>" +
                                                 options.CamlQuery +
                                             "</Query>" +
@@ -184,9 +227,18 @@ namespace Webritter.SharePointFileRenamer
                         {
                             #region get field values
                             List<object> fieldValues = new List<object>();
-                            foreach (var field in options.FieldNames)
+                            foreach (var field in options.QueryFields)
                             {
-                                object fieldValue = GetFieldValueAsIntOrString(item, field.FieldName);                                                             
+                                object fieldValue = GetFieldValueAsIntOrString(item, field.FieldName); 
+                                if (field.FieldName == "_UIVersionString")
+                                {
+                                    // prepare the version value as a future major version
+                                    // because it is impossible to update a major version!
+                                    decimal dec;
+                                    if (decimal.TryParse(fieldValue.ToString().Replace(".",","), out dec)) {
+                                        fieldValue = Math.Ceiling(dec).ToString() + ".0";
+                                    }
+                                }
                                 fieldValues.Add(fieldValue);
                                 if (fieldValue == null)
                                 {
@@ -206,54 +258,32 @@ namespace Webritter.SharePointFileRenamer
                             {
                                 try
                                 {
-                                    // find current and new file name
-                                    currentFileName = item["FileLeafRef"].ToString();
-                                    string extension = System.IO.Path.GetExtension(currentFileName);
-                                    newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray()) + extension;
-                                    // replace illegal characters
-                                    newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
+                                    
 
-                                    // get current and new path
-                                    ctx.Load(item.File);
-                                    ctx.ExecuteQuery();
-                                    string currentPath = item.File.ServerRelativeUrl.ToString().Replace("/" + currentFileName, "");
-                                    string newPath = currentPath;
-                                    if (!string.IsNullOrEmpty(options.MoveTo))
+                     
+
+                                    // get current values and new values of the fields to update
+                                    bool anyFieldToChange = false;
+                                    foreach (var field in updateFields)
                                     {
-                                        if (!options.MoveTo.StartsWith("/"))
+                                        field.CurrentValueAsString = GetFieldValueAsString(item, field.SpField.StaticName);
+                                        if (!field.IsStaticValue)
                                         {
-                                            // new path is a sub folder
-                                            newPath = currentPath + "/" + options.MoveTo;
+                                            field.NewValueAsString = string.Format(field.Format, fieldValues.ToArray());
                                         }
-                                        else
-                                        {
-                                            // new path is server relative
-                                            newPath = options.MoveTo;
-                                        }
+                                        anyFieldToChange = anyFieldToChange || field.CurrentValueAsString != field.NewValueAsString;
                                     }
 
-                                    // get current and new status
-                                    string currentStatus = null;
-                                    string newStatus = null;
-                                    if(!string.IsNullOrEmpty(options.StatusFieldName))
+                                    if (anyFieldToChange)
                                     {
-                                        var val = GetFieldValueAsIntOrString(item, options.StatusFieldName);
-                                        currentStatus = (val != null) ? val.ToString() : "";
-                                        newStatus = options.StatusSuccessValue;
-                                    }
-
-
-
-                                    if (newFileName != currentFileName || newPath != currentPath || newStatus != currentStatus)
-                                    {
-                                        // there s something todo with the file!! 
+                                        // there s something todo with the item!! 
 
                                         try
                                         {
                                             bool hasCheckedOut = false;
                                             #region checkout
 
-                                            if (spList.ForceCheckout)
+                                            if (spList.ForceCheckout || true)
                                             {
                                                 try
                                                 {
@@ -282,86 +312,28 @@ namespace Webritter.SharePointFileRenamer
 
                                             #endregion
 
-                                            #region rename or move file
-                                            if (newPath != currentPath)
+                                            #region update field
+                                            foreach(var field in updateFields)
                                             {
-                                                // move the file
-                                                item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
-                                                ctx.ExecuteQuery();
-                                                log.Info("Moved ''" + item["FileLeafRef"] + "' to '" + options.MoveTo + "'");
-                                            }
-                                            else if (newFileName != currentFileName)
-                                            {
-                                                // rename the file
-                                                item["FileLeafRef"] = newFileName;
-                                                item.Update();
-                                                ctx.ExecuteQuery();
-                                                log.Info("Renamed '" + currentFileName + "' to '" + newFileName + "'");
-
-                                            }
-                                
-                                            #endregion
-                                            #region update status
-
-                                            if (newStatus != currentStatus)
-                                            {
-                                                // update status in item
-                                                if (statusTermId != null)
+                                                if (field.CurrentValueAsString != field.NewValueAsString)
                                                 {
-                                                    // status field is a taxonomy field
-                                                    // try to set the taxonomy field
-                                                    TaxonomyFieldValue termValue = null;
-                                                    TaxonomyFieldValueCollection termValues = null;
-
-                                                    string termValueString = string.Empty;
-
-                                                    if (txField.AllowMultipleValues)
+                                                    if(field.SpField.TypeAsString == "TaxonomyFieldType")
                                                     {
-
-                                                        // multi value taxonomy field as status field
-                                                        termValues = item[options.StatusFieldName] as TaxonomyFieldValueCollection;
-                                                        bool found = false;
-                                                        foreach (TaxonomyFieldValue tv in termValues)
-                                                        {
-                                                            found = found || tv.TermGuid == statusTermId;
-                                                            termValueString += tv.WssId + ";#" + tv.Label + "|" + tv.TermGuid + ";#";
-                                                        }
-
-                                                        if (!found)
-                                                        {
-                                                            // add the new status at the end of all values
-                                                            termValueString += "-1;#" + options.StatusSuccessValue + "|" + statusTermId;
-                                                            termValues = new TaxonomyFieldValueCollection(ctx, termValueString, txField);
-                                                            txField.SetFieldValueByValueCollection(item, termValues);
-                                                        }
-                                                    }
+                                                        var txField = ctx.CastTo<TaxonomyField>(field.SpField);
+                                                        txField.SetFieldValueByValue(item, field.NewValue);
+                                                    }                                                
                                                     else
                                                     {
-                                                       
-                                                        // single value taxonomy field
-                                                        termValue = new TaxonomyFieldValue();
-                                                        termValue.Label = newStatus;
-                                                        termValue.TermGuid = statusTermId;
-                                                        termValue.WssId = -1;
-                                                        txField.SetFieldValueByValue(item, termValue);
+                                                        item[field.SpField.InternalName] = field.NewValueAsString;
                                                     }
+                                                    log.Info("Updated:'" + field.SpField.InternalName + "' from '" + field.CurrentValueAsString + "' to '" + field.NewValueAsString + "'");
                                                 }
-                                                else
-                                                {
-                                                    // try to setup status as text field 
-                                                    item[options.StatusFieldName] = newStatus;
-                                                }
-                                                item.Update();
-                                                ctx.ExecuteQuery();
-                                                log.Info("Updated:'" + options.StatusFieldName + "' from '" + currentStatus +  "' to '" + newStatus + "'");
-
-
-
                                             }
-                                            #endregion
-                                            #region update version
-                                            #endregion
 
+                                            item.Update();
+                                            ctx.ExecuteQuery();
+                                            #endregion
+ 
                                             if (hasCheckedOut)
                                             {
                                                 #region checkin
@@ -370,7 +342,7 @@ namespace Webritter.SharePointFileRenamer
                                                     var realoadedItem = spList.GetItemById(item.Id);
                                                     realoadedItem.File.CheckIn(options.CheckinMessage, options.CheckinType);
                                                     ctx.ExecuteQuery();
-                                                    log.Info("Checked in: ''" + newFileName + "'");
+                                                    log.Info("Checked in: '" + newFileName + "'");
                                                 }
                                                 #endregion
                                                 #region publish
@@ -379,7 +351,7 @@ namespace Webritter.SharePointFileRenamer
                                                     var realoadedItem = spList.GetItemById(item.Id);
                                                     realoadedItem.File.Publish(options.PublishInfo);
                                                     ctx.ExecuteQuery();
-                                                    log.Info("Published: ''" + newFileName + "'");
+                                                    log.Info("Published: '" + newFileName + "'");
                                                 }
                                                 #endregion
                                                 #region approve
@@ -388,41 +360,77 @@ namespace Webritter.SharePointFileRenamer
                                                     var realoadedItem = spList.GetItemById(item.Id);
                                                     realoadedItem.File.Approve(options.ApproveInfo);
                                                     ctx.ExecuteQuery();
-                                                    log.Info("Approved: ''" + newFileName + "'");
+                                                    log.Info("Approved: '" + newFileName + "'");
                                                 }
                                                 #endregion
-                                                #region workflow
-                                                if (!string.IsNullOrEmpty(options.WorkflowName))
-                                                {
-
-                                                   
-
-                                                    var realoadedItem = spList.GetItemById(item.Id);
-                                                    ctx.Load(realoadedItem);
-                                                    ctx.ExecuteQuery();
-                                                    workflowRep.RunListWorkflow45(realoadedItem.Id, options.WorkflowName, null);
-
-                                                }
-                                                #endregion
-                                            }
-
-
-
+                                             }
+ 
                                         }
                                         catch (Exception ex)
                                         {
-                                            log.Error("Error renaiming or moving file", ex);
+                                            log.Error("Error updating item", ex);
                                         }
-
-
                                     }
                                     else
                                     {
-                                        log.Info("Skipped because filename or path is not to change!");
+                                        log.Info("Skipped item update because nothing is to change!");
                                     }
 
- 
-                               }
+                                    // find current and new file name
+                                    currentFileName = item["FileLeafRef"].ToString();
+                                    newFileName = currentFileName;
+                                    if (!string.IsNullOrEmpty(options.FileNameFormat))
+                                    {
+                                        string extension = System.IO.Path.GetExtension(currentFileName);
+                                        newFileName = string.Format(options.FileNameFormat, fieldValues.ToArray()) + extension;
+                                        // replace illegal characters
+                                        newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
+                                    }
+
+                                    string currentPath = "";
+                                    string newPath = "";
+                                    if (newFileName != currentFileName || !string.IsNullOrEmpty(options.MoveTo))
+                                    {
+                                        // get current and new path
+                                        
+                                        currentPath = item["FileRef"].ToString().Replace("/" + currentFileName, "");
+                                        newPath = currentPath;
+                                        if (!string.IsNullOrEmpty(options.MoveTo))
+                                        {
+                                            if (!options.MoveTo.StartsWith("/"))
+                                            {
+                                                // new path is a sub folder
+                                                newPath = currentPath + "/" + options.MoveTo;
+                                            }
+                                            else
+                                            {
+                                                // new path is server relative
+                                                newPath = options.MoveTo;
+                                            }
+                                        }
+
+                                    }
+                                    if (newFileName != currentFileName || newPath != currentPath)
+                                    {
+                                        #region rename or move file
+                                        try
+                                       
+                                        {
+                                            // move the file
+                                            item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
+                                            ctx.ExecuteQuery();
+                                            log.Info("Moved ''" + currentFileName + "' to '" + newFileName + "'");
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            log.Error("Error moving or renaming file", ex);
+                                        }
+
+
+                                        #endregion
+                                    }
+
+                                }
                                 catch (Exception ex)
                                 {
                                     log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
@@ -444,7 +452,7 @@ namespace Webritter.SharePointFileRenamer
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Exception : " + ex.Message);
+                log.Error("Exception : " + ex.Message);
             }
 
             log.Info("Programm ended");
@@ -479,6 +487,16 @@ namespace Webritter.SharePointFileRenamer
                    o.GetType().GetGenericTypeDefinition().IsAssignableFrom(typeof(Dictionary<,>));
         }
 
+        private static string GetFieldValueAsString(ListItem item, string fieldName)
+        {
+            string erg = "";
+            object intOrString = GetFieldValueAsIntOrString(item, fieldName);
+            if (intOrString != null)
+            {
+                erg = intOrString.ToString();
+            }
+            return erg;
+        }
         private static object GetFieldValueAsIntOrString(ListItem item, string fieldName)
         {
             object fieldValue = null;

@@ -15,15 +15,16 @@ namespace Webritter.SharePointFileRenamer
         private WorkflowSubscriptionCollection _subscriptions;
         public ClientContext Context;
 
-        public WorkflowRepository(ClientContext clientContext)
+        public WorkflowRepository(ClientContext clientContext, Guid listId)
         {
-            Context = clientContext;
+            var Context = clientContext;
+
             var wfMngr = new WorkflowServicesManager(Context, Context.Web);
             var subsrService = wfMngr.GetWorkflowSubscriptionService();
             _interopService = wfMngr.GetWorkflowInteropService();
             _instanceService = wfMngr.GetWorkflowInstanceService();
-            _subscriptions = subsrService.EnumerateSubscriptions();
-
+            _subscriptions = subsrService.EnumerateSubscriptionsByList(listId);
+            
             Context.Load(_subscriptions);
             Context.ExecuteQuery();
         }

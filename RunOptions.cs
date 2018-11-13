@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Serialization;
 
 namespace Webritter.SharePointFileRenamer
 {
@@ -19,11 +20,12 @@ namespace Webritter.SharePointFileRenamer
         public string SiteUrl { get; set; }
         public string LibraryName { get; set; }
         public string CamlQuery { get; set; }
+        public string Scope { get; set; }
         public string FileNameFormat { get; set; }
-        public List<FieldOptions> FieldNames { get; set; }
+        public List<QueryFieldOptions> QueryFields { get; set; }
+        public List<UpdateFieldOptions> UpdateFields { get; set; }
         public string MoveTo { get; set; }
-        public string StatusFieldName { get; set; }
-        public string StatusSuccessValue { get; set; }
+
         public string CheckinMessage { get; set; }
         public CheckinType CheckinType { get; set; }
         public string PublishInfo { get; set; }
@@ -33,7 +35,8 @@ namespace Webritter.SharePointFileRenamer
         // constuctor
         public RunOptions()
         {
-            FieldNames =  new List<FieldOptions>();
+            QueryFields =  new List<QueryFieldOptions>();
+            UpdateFields = new List<UpdateFieldOptions>();
         }
 
         public static RunOptions LoadFromXMl(string xmlFileName)
@@ -60,6 +63,7 @@ namespace Webritter.SharePointFileRenamer
         {
             RunOptions sample = new RunOptions()
             {
+                Enabled = true,
                 SiteUrl = "https://sharepoint.identecsolutions.com/sites/WS0029",
                 Domain = "",
                 Username = "identec\\communardo",
@@ -79,17 +83,34 @@ namespace Webritter.SharePointFileRenamer
                                   </And>
                                </Where>",
 //                CamlQuery = "<Where><And><Eq><FieldRef Name='FileDirRef' /><Value Type='Text'>/sites/WS0029/Product Customization</Value></Eq><IsNull><FieldRef Name='identecDocumentStatus'/></IsNull></And></Where>",
-                FieldNames = new List<FieldOptions>()
+                QueryFields = new List<QueryFieldOptions>()
                 {
-                    new FieldOptions()
+                    new QueryFieldOptions()
                     {
                         FieldName = "ID",
                         ShouldNotBeNull = true
+                    },
+                     new QueryFieldOptions()
+                    {
+                        FieldName = "_UIVersionString"
                     }
                 },
+                UpdateFields = new List<UpdateFieldOptions>()
+                {
+                    new UpdateFieldOptions()
+                    {
+                        FieldName = "Title",
+                        Format = "PCF_{0:00000}_{1}"
+                    },
+                    new UpdateFieldOptions()
+                    {
+                        FieldName = "identecDocumentStatus",
+                        Format = "Draft"
+                    }
 
-                StatusFieldName = "identecDocumentStatus",
-                StatusSuccessValue = "Draft",
+                },
+
+
                 CheckinMessage ="File Renamed",
                 CheckinType = CheckinType.OverwriteCheckIn,
                 PublishInfo = null,
@@ -100,9 +121,19 @@ namespace Webritter.SharePointFileRenamer
         }
     }
 
-    public class FieldOptions
+    public class QueryFieldOptions
     {
+        [XmlAttribute("Name")]
         public string FieldName { get; set; }
+        [XmlAttribute("ShouldNotBeNull")]
         public bool ShouldNotBeNull { get; set; }
+    }
+
+    public class UpdateFieldOptions
+    {
+        [XmlAttribute("Name")]
+        public string FieldName { get; set; }
+        [XmlAttribute("Format")]
+        public string Format { get; set; }
     }
 }

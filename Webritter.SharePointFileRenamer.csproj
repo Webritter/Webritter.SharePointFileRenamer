@@ -228,6 +228,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="QueryFieldInfo.cs" />
     <Compile Include="RunOptions.cs" />
     <Compile Include="TaxonomyHelpers.cs" />
     <Compile Include="WorkflowRepository.cs" />
