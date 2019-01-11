@@ -11,8 +11,10 @@ A simple commandline application to rename and move files in SharePoint document
 ## use cases
 Go through all files in a document library and update some fields (Title)
 ### Update title in document by selected properties and Id
-New documents in the library are named from Word-Online as "Document1", "Document2", ....
+New documents in the library are named by Word-Online as "Document1", "Document2", ....
+
 In the document library is a custom propertie with the type of the Document("Concept", "Manual", "Report")
+
 The filenames should be named as "Concept(1)", 2Manual(2)", "Report(3)"
 
 ### Rename all files by selection in a dropdwn field (category) and unique id
