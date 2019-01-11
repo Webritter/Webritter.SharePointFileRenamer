@@ -15,7 +15,8 @@ namespace Webritter.SharePointFileRenamer
         public string Username { get; set; }
         public string Password { get; set; }
         public string SiteUrl { get; set; }
-
+        public int LoopCnt { get; set; }
+        public int LoopDelay { get; set; }
 
         // tasks
         public List<RunOptionsTask> Tasks { get; set; }

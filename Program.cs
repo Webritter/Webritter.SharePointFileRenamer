@@ -12,6 +12,7 @@ using Microsoft.SharePoint.Client.Taxonomy;
 using System.Globalization;
 using Microsoft.SharePoint.Workflow;
 using Microsoft.SharePoint.Client.WorkflowServices;
+using System.Threading;
 
 namespace Webritter.SharePointFileRenamer
 {
@@ -82,365 +83,381 @@ namespace Webritter.SharePointFileRenamer
                     Web web = ctx.Web;
                     ctx.Load(web);
 
-                    foreach(var taskOptions in runOptions.Tasks)
+                    var loopCnt = (runOptions.LoopCnt > 0) ? runOptions.LoopCnt : 1;
+                    
+                    while (loopCnt > 0)
                     {
-                        if (!taskOptions.Enabled)
+                        foreach (var taskOptions in runOptions.Tasks)
                         {
-                            log.Info("Skipped task '" + taskOptions.Title + "' because task is disabled");
-                            continue;
-                        }
-
-                        log.Info("Starting task '" + taskOptions.Title + "'");
-
-                        // load the list of the document library
-                        List spList = ctx.Web.Lists.GetByTitle(taskOptions.LibraryName);
-                        ctx.Load(spList);
-
-
-                        // loading all field definitions from sharepoint
-                        FieldCollection fields = spList.Fields;
-                        ctx.Load(fields);
-
-                        // load the current user data
-                        User currentUser = web.CurrentUser;
-                        ctx.Load(currentUser);
-
-                        // get all static uptade field values
-                        List<FieldInfo> updateFields = new List<FieldInfo>();
-                        foreach (var field in taskOptions.UpdateFields)
-                        {
-                            var fieldInfo = new FieldInfo();
-                            fieldInfo.SpField = fields.GetByInternalNameOrTitle(field.FieldName);
-                            // get the formating info for the new Value
-                            fieldInfo.Format = field.Format;
-                            fieldInfo.IsStaticValue = !field.Format.Contains("{");
-
-                            ctx.Load(fieldInfo.SpField);
-                            updateFields.Add(fieldInfo);
-                        }
-                        ctx.ExecuteQuery();
-
-                        // Prepare static new values
-                        foreach (var field in updateFields)
-                        {
-                            if (field.IsStaticValue)
+                            if (!taskOptions.Enabled)
                             {
-                                if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
-                                {
-                                    var txField = ctx.CastTo<TaxonomyField>(field.SpField);
-                                    if (txField.AllowMultipleValues)
-                                    {
-                                        log.Error("update of multiple value taxonomy fields not supported jet");
-                                        continue;
-                                    }
-                                    var statusTermId = TaxonomyHelpers.GetTermIdForTerm(field.Format, txField.TermSetId, ctx);
-                                    log.Info("field to update is a taxonomy field! id found:" + statusTermId);
-                                    if (statusTermId != null)
-                                    {
-                                        field.NewValue = new TaxonomyFieldValue()
-                                        {
-                                            Label = field.Format,
-                                            TermGuid = statusTermId,
-                                            WssId = -1
-                                        };
-                                        // new vaue to compare with current value as string is static 
-                                        field.NewValueAsString = field.Format;
-                                    }
-                                    else
-                                    {
-                                        field.NewValueAsString = field.Format;
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
-                                {
-                                    log.Error("Dynamic field values in taxonomy field not supportede jet!");
-                                    continue;
-                                }
+                                log.Info("Skipped task '" + taskOptions.Title + "' because task is disabled");
+                                continue;
                             }
 
-                        }
+                            log.Info("Starting task '" + taskOptions.Title + "'");
 
-                        log.Info("Document library found with total " + spList.ItemCount + " docuements");
-                        if (spList.ItemCount == 0)
-                        {
-                            continue;
-                        }
-
-                        // build viewFields for CAML-Query with all query and update fields
-                        string viewFields;
-                        viewFields = "<ViewFields>";
-
-                        foreach (var field in taskOptions.QueryFields)
-                        {
-                            viewFields += "<FieldRef " +
-                                "Name='" + field.FieldName + "'" +
-                                " />";
-                        }
-                        foreach (var field in taskOptions.UpdateFields)
-                        {
-                            viewFields += "<FieldRef " +
-                                "Name='" + field.FieldName + "'" +
-                                " />";
-                        }
-
-                        viewFields += "</ViewFields>";
-
-                        // build caml query
-                        string scope = (!string.IsNullOrEmpty(taskOptions.Scope)) ? " Scope='" + taskOptions.Scope + "' " : "";
-                        CamlQuery camlQuery = new CamlQuery();
-                        camlQuery.ViewXml = "<View " + scope + " > " +
-                                                "<Query>" +
-                                                    taskOptions.CamlQuery +
-                                                "</Query>" +
-                                                viewFields +
-                                            "</View>";
-
-                        // get list items by CAML query
-                        ListItemCollection listItems = spList.GetItems(camlQuery);
-                        ctx.Load(listItems);
-                        ctx.ExecuteQuery();
-
-                        log.Info("found " + listItems.Count + " documents to check");
+                            // load the list of the document library
+                            List spList = ctx.Web.Lists.GetByTitle(taskOptions.LibraryName);
+                            ctx.Load(spList);
 
 
+                            // loading all field definitions from sharepoint
+                            FieldCollection fields = spList.Fields;
+                            ctx.Load(fields);
 
-                        // go through all foind items
-                        foreach (var item in listItems)
-                        {
-                            log.Info("Checking '" + item["FileLeafRef"] + "' ....");
-                            bool skip = false;
-                            if (item.FileSystemObjectType == FileSystemObjectType.File)
+                            // load the current user data
+                            User currentUser = web.CurrentUser;
+                            ctx.Load(currentUser);
+
+                            // get all static uptade field values
+                            List<FieldInfo> updateFields = new List<FieldInfo>();
+                            foreach (var field in taskOptions.UpdateFields)
                             {
-                                #region get field values
-                                // get all query field values as string or integer
-                                // this values will be used to format the filename and the 
-                                // update fields
-                                List<object> fieldValues = new List<object>();
-                                foreach (var field in taskOptions.QueryFields)
+                                var fieldInfo = new FieldInfo();
+                                fieldInfo.SpField = fields.GetByInternalNameOrTitle(field.FieldName);
+                                // get the formating info for the new Value
+                                fieldInfo.Format = field.Format;
+                                fieldInfo.IsStaticValue = !field.Format.Contains("{");
+
+                                ctx.Load(fieldInfo.SpField);
+                                updateFields.Add(fieldInfo);
+                            }
+                            ctx.ExecuteQuery();
+
+                            // Prepare static new values
+                            foreach (var field in updateFields)
+                            {
+                                if (field.IsStaticValue)
                                 {
-                                    object fieldValue = GetFieldValueAsIntOrString(item, field.FieldName);
-                                    if (field.FieldName == "_UIVersionString")
+                                    if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
                                     {
-                                        // prepare the version value as a future major version
-                                        // because it is impossible to update a major version!
-                                        decimal dec;
-                                        if (decimal.TryParse(fieldValue.ToString().Replace(".", ","), out dec))
+                                        var txField = ctx.CastTo<TaxonomyField>(field.SpField);
+                                        if (txField.AllowMultipleValues)
                                         {
-                                            fieldValue = Math.Ceiling(dec).ToString() + ".0";
+                                            log.Error("update of multiple value taxonomy fields not supported jet");
+                                            continue;
                                         }
-                                    }
-                                    fieldValues.Add(fieldValue);
-                                    if (fieldValue == null)
-                                    {
-                                        // the content of the field is null
-                                        if (field.ShouldNotBeNull)
+                                        var statusTermId = TaxonomyHelpers.GetTermIdForTerm(field.Format, txField.TermSetId, ctx);
+                                        log.Info("field to update is a taxonomy field! id found:" + statusTermId);
+                                        if (statusTermId != null)
                                         {
-                                            skip = true;
-                                            log.Warn("Skipped because '" + field.FieldName + "' is null");
-                                            break;
-                                        }
-                                    }
-                                }
-                                #endregion
-                                string currentFileName = currentFileName = item["FileLeafRef"].ToString(); ;
-                                string newFileName = currentFileName;
-                                if (!skip)
-                                {
-                                    try
-                                    {
-                                        // get current values and new values of the fields to update
-                                        bool anyFieldToChange = false;
-                                        foreach (var field in updateFields)
-                                        {
-                                            field.CurrentValueAsString = GetFieldValueAsString(item, field.SpField.StaticName);
-                                            if (!field.IsStaticValue)
+                                            field.NewValue = new TaxonomyFieldValue()
                                             {
-                                                // this is a dynamic new value -> use format with query field values
-                                                field.NewValueAsString = string.Format(field.Format, fieldValues.ToArray());
-                                            }
-                                            anyFieldToChange = anyFieldToChange || field.CurrentValueAsString != field.NewValueAsString;
-                                        }
-
-                                        if (anyFieldToChange)
-                                        {
-                                            // there s something todo with the item!! 
-
-                                            try
-                                            {
-                                                bool hasCheckedOut = false;
-                                                #region checkout
-
-                                                if (spList.ForceCheckout || true)
-                                                {
-                                                    try
-                                                    {
-                                                        item.File.CheckOut();
-                                                        ctx.ExecuteQuery();
-                                                        hasCheckedOut = true;
-                                                        log.Info("Checked out: ''" + currentFileName + "'");
-                                                    }
-                                                    catch (Exception ex)
-                                                    {
-                                                        // check if checked out by me
-                                                        User checkedOutBy = item.File.CheckedOutByUser;
-                                                        ctx.Load(checkedOutBy);
-                                                        ctx.ExecuteQuery();
-                                                        if (checkedOutBy.Id != currentUser.Id)
-                                                        {
-                                                            log.Warn("Skipped because item is checked out by another user'");
-                                                            continue;
-                                                        }
-                                                        // leave hasCheckedOu on false, because changes was made
-                                                        // by the sema user as script is running.
-                                                        //hasCheckedOut = true;
-                                                        log.Info("File was checked out by me: ''" + currentFileName + "'");
-                                                    }
-                                                }
-
-                                                #endregion
-
-                                                #region update field
-                                                foreach (var field in updateFields)
-                                                {
-                                                    if (field.CurrentValueAsString != field.NewValueAsString)
-                                                    {
-                                                        if (field.SpField.TypeAsString == "TaxonomyFieldType")
-                                                        {
-                                                            var txField = ctx.CastTo<TaxonomyField>(field.SpField);
-                                                            txField.SetFieldValueByValue(item, field.NewValue);
-                                                        }
-                                                        else
-                                                        {
-                                                            item[field.SpField.InternalName] = field.NewValueAsString;
-                                                        }
-                                                        log.Info("Updated:'" + field.SpField.InternalName + "' from '" + field.CurrentValueAsString + "' to '" + field.NewValueAsString + "'");
-                                                    }
-                                                }
-
-                                                item.Update();
-                                                ctx.ExecuteQuery();
-                                                #endregion
-
-                                                if (hasCheckedOut)
-                                                {
-                                                    #region checkin
-                                                    if (hasCheckedOut)
-                                                    {
-                                                        var realoadedItem = spList.GetItemById(item.Id);
-                                                        realoadedItem.File.CheckIn(taskOptions.CheckinMessage, taskOptions.CheckinType);
-                                                        ctx.ExecuteQuery();
-                                                        log.Info("Checked in: '" + newFileName + "'");
-                                                    }
-                                                    #endregion
-                                                    #region publish
-                                                    if (!string.IsNullOrEmpty(taskOptions.PublishInfo))
-                                                    {
-                                                        var realoadedItem = spList.GetItemById(item.Id);
-                                                        realoadedItem.File.Publish(taskOptions.PublishInfo);
-                                                        ctx.ExecuteQuery();
-                                                        log.Info("Published: '" + newFileName + "'");
-                                                    }
-                                                    #endregion
-                                                    #region approve
-                                                    if (!string.IsNullOrEmpty(taskOptions.ApproveInfo))
-                                                    {
-                                                        var realoadedItem = spList.GetItemById(item.Id);
-                                                        realoadedItem.File.Approve(taskOptions.ApproveInfo);
-                                                        ctx.ExecuteQuery();
-                                                        log.Info("Approved: '" + newFileName + "'");
-                                                    }
-                                                    #endregion
-                                                }
-
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                log.Error("Error updating item", ex);
-                                            }
+                                                Label = field.Format,
+                                                TermGuid = statusTermId,
+                                                WssId = -1
+                                            };
+                                            // new vaue to compare with current value as string is static 
+                                            field.NewValueAsString = field.Format;
                                         }
                                         else
                                         {
-                                            log.Info("Skipped item update because nothing is to change!");
+                                            field.NewValueAsString = field.Format;
                                         }
-
-                                        // find new file name
-                                        if (!string.IsNullOrEmpty(taskOptions.FileNameFormat))
-                                        {
-                                            string extension = System.IO.Path.GetExtension(currentFileName);
-                                            newFileName = string.Format(taskOptions.FileNameFormat, fieldValues.ToArray()) + extension;
-                                            // replace illegal characters
-                                            newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
-                                        }
-
-                                        string currentPath = "";
-                                        string newPath = "";
-                                        if (newFileName != currentFileName || !string.IsNullOrEmpty(taskOptions.MoveTo))
-                                        {
-                                            // get current and new path
-
-                                            currentPath = item["FileRef"].ToString().Replace("/" + currentFileName, "");
-                                            newPath = currentPath;
-                                            if (!string.IsNullOrEmpty(taskOptions.MoveTo))
-                                            {
-                                                newPath = taskOptions.MoveTo;
-
-                                                if (newPath.Contains("{"))
-                                                {
-                                                    newPath = string.Format(newPath, fieldValues.ToArray());
-                                                }
-
-                                                if (!newPath.StartsWith("/"))
-                                                {
-                                                    // new path is a sub folder
-                                                    newPath = currentPath + "/" + newPath;
-                                                }
-
-                                            }
-
-                                        }
-                                        if (newFileName != currentFileName || newPath != currentPath)
-                                        {
-                                            #region rename or move file
-                                            try
-                                            {
-                                                // move the file
-                                                item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
-                                                ctx.ExecuteQuery();
-                                                log.Info("Moved '" + currentFileName + "' to '" + newFileName + "'");
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                log.Error("Error moving or renaming file", ex);
-                                            }
-
-
-                                            #endregion
-                                        }
-
                                     }
-                                    catch (Exception ex)
+                                }
+                                else
+                                {
+                                    if (field.SpField != null && field.SpField.TypeAsString == "TaxonomyFieldType")
                                     {
-                                        log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
+                                        log.Error("Dynamic field values in taxonomy field not supportede jet!");
+                                        continue;
                                     }
                                 }
 
                             }
-                            else
+
+                            log.Info("Document library found with total " + spList.ItemCount + " docuements");
+                            if (spList.ItemCount == 0)
                             {
-                                // this is not a file
-                                log.Warn("Skipped because this is not a file!");
+                                continue;
                             }
 
+                            // build viewFields for CAML-Query with all query and update fields
+                            string viewFields;
+                            viewFields = "<ViewFields>";
+
+                            foreach (var field in taskOptions.QueryFields)
+                            {
+                                viewFields += "<FieldRef " +
+                                    "Name='" + field.FieldName + "'" +
+                                    " />";
+                            }
+                            foreach (var field in taskOptions.UpdateFields)
+                            {
+                                viewFields += "<FieldRef " +
+                                    "Name='" + field.FieldName + "'" +
+                                    " />";
+                            }
+
+                            viewFields += "</ViewFields>";
+
+                            // build caml query
+                            string scope = (!string.IsNullOrEmpty(taskOptions.Scope)) ? " Scope='" + taskOptions.Scope + "' " : "";
+                            CamlQuery camlQuery = new CamlQuery();
+                            camlQuery.ViewXml = "<View " + scope + " > " +
+                                                    "<Query>" +
+                                                        taskOptions.CamlQuery +
+                                                    "</Query>" +
+                                                    viewFields +
+                                                "</View>";
+
+                            // get list items by CAML query
+                            ListItemCollection listItems = spList.GetItems(camlQuery);
+                            ctx.Load(listItems);
+                            ctx.ExecuteQuery();
+
+                            log.Info("found " + listItems.Count + " documents to check");
+
+
+
+                            // go through all foind items
+                            foreach (var item in listItems)
+                            {
+                                log.Info("Checking '" + item["FileLeafRef"] + "' ....");
+                                bool skip = false;
+                                if (item.FileSystemObjectType == FileSystemObjectType.File)
+                                {
+                                    #region get field values
+                                    // get all query field values as string or integer
+                                    // this values will be used to format the filename and the 
+                                    // update fields
+                                    List<object> fieldValues = new List<object>();
+                                    foreach (var field in taskOptions.QueryFields)
+                                    {
+                                        object fieldValue = GetFieldValueAsIntOrString(item, field.FieldName);
+                                        if (field.FieldName == "_UIVersionString")
+                                        {
+                                            // prepare the version value as a future major version
+                                            // because it is impossible to update a major version!
+                                            decimal dec;
+                                            if (decimal.TryParse(fieldValue.ToString().Replace(".", ","), out dec))
+                                            {
+                                                fieldValue = Math.Ceiling(dec).ToString() + ".0";
+                                            }
+                                        }
+                                        fieldValues.Add(fieldValue);
+                                        if (fieldValue == null)
+                                        {
+                                            // the content of the field is null
+                                            if (field.ShouldNotBeNull)
+                                            {
+                                                skip = true;
+                                                log.Warn("Skipped because '" + field.FieldName + "' is null");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    #endregion
+                                    string currentFileName = currentFileName = item["FileLeafRef"].ToString(); ;
+                                    string newFileName = currentFileName;
+                                    if (!skip)
+                                    {
+                                        try
+                                        {
+                                            // get current values and new values of the fields to update
+                                            bool anyFieldToChange = false;
+                                            foreach (var field in updateFields)
+                                            {
+                                                field.CurrentValueAsString = GetFieldValueAsString(item, field.SpField.StaticName);
+                                                if (!field.IsStaticValue)
+                                                {
+                                                    // this is a dynamic new value -> use format with query field values
+                                                    field.NewValueAsString = string.Format(field.Format, fieldValues.ToArray());
+                                                }
+                                                anyFieldToChange = anyFieldToChange || field.CurrentValueAsString != field.NewValueAsString;
+                                            }
+
+                                            if (anyFieldToChange)
+                                            {
+                                                // there s something todo with the item!! 
+
+                                                try
+                                                {
+                                                    bool hasCheckedOut = false;
+                                                    #region checkout
+
+                                                    if (spList.ForceCheckout || true)
+                                                    {
+                                                        try
+                                                        {
+                                                            item.File.CheckOut();
+                                                            ctx.ExecuteQuery();
+                                                            hasCheckedOut = true;
+                                                            log.Info("Checked out: ''" + currentFileName + "'");
+                                                        }
+                                                        catch (Exception ex)
+                                                        {
+                                                            // check if checked out by me
+                                                            User checkedOutBy = item.File.CheckedOutByUser;
+                                                            ctx.Load(checkedOutBy);
+                                                            ctx.ExecuteQuery();
+                                                            if (checkedOutBy.Id != currentUser.Id)
+                                                            {
+                                                                log.Warn("Skipped because item is checked out by another user'");
+                                                                continue;
+                                                            }
+                                                            // leave hasCheckedOu on false, because changes was made
+                                                            // by the sema user as script is running.
+                                                            //hasCheckedOut = true;
+                                                            log.Info("File was checked out by me: ''" + currentFileName + "'");
+                                                        }
+                                                    }
+
+                                                    #endregion
+
+                                                    #region update field
+                                                    foreach (var field in updateFields)
+                                                    {
+                                                        if (field.CurrentValueAsString != field.NewValueAsString)
+                                                        {
+                                                            if (field.SpField.TypeAsString == "TaxonomyFieldType")
+                                                            {
+                                                                var txField = ctx.CastTo<TaxonomyField>(field.SpField);
+                                                                txField.SetFieldValueByValue(item, field.NewValue);
+                                                            }
+                                                            else
+                                                            {
+                                                                item[field.SpField.InternalName] = field.NewValueAsString;
+                                                            }
+                                                            log.Info("Updated:'" + field.SpField.InternalName + "' from '" + field.CurrentValueAsString + "' to '" + field.NewValueAsString + "'");
+                                                        }
+                                                    }
+
+                                                    item.Update();
+                                                    ctx.ExecuteQuery();
+                                                    #endregion
+
+                                                    if (hasCheckedOut)
+                                                    {
+                                                        #region checkin
+                                                        if (hasCheckedOut)
+                                                        {
+                                                            var realoadedItem = spList.GetItemById(item.Id);
+                                                            realoadedItem.File.CheckIn(taskOptions.CheckinMessage, taskOptions.CheckinType);
+                                                            ctx.ExecuteQuery();
+                                                            log.Info("Checked in: '" + newFileName + "'");
+                                                        }
+                                                        #endregion
+                                                        #region publish
+                                                        if (!string.IsNullOrEmpty(taskOptions.PublishInfo))
+                                                        {
+                                                            var realoadedItem = spList.GetItemById(item.Id);
+                                                            realoadedItem.File.Publish(taskOptions.PublishInfo);
+                                                            ctx.ExecuteQuery();
+                                                            log.Info("Published: '" + newFileName + "'");
+                                                        }
+                                                        #endregion
+                                                        #region approve
+                                                        if (!string.IsNullOrEmpty(taskOptions.ApproveInfo))
+                                                        {
+                                                            var realoadedItem = spList.GetItemById(item.Id);
+                                                            realoadedItem.File.Approve(taskOptions.ApproveInfo);
+                                                            ctx.ExecuteQuery();
+                                                            log.Info("Approved: '" + newFileName + "'");
+                                                        }
+                                                        #endregion
+                                                    }
+
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    log.Error("Error updating item", ex);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                log.Info("Skipped item update because nothing is to change!");
+                                            }
+
+                                            // find new file name
+                                            if (!string.IsNullOrEmpty(taskOptions.FileNameFormat))
+                                            {
+                                                string extension = System.IO.Path.GetExtension(currentFileName);
+                                                newFileName = string.Format(taskOptions.FileNameFormat, fieldValues.ToArray()) + extension;
+                                                // replace illegal characters
+                                                newFileName = string.Join("_", newFileName.Split(System.IO.Path.GetInvalidFileNameChars()));
+                                            }
+
+                                            string currentPath = "";
+                                            string newPath = "";
+                                            if (newFileName != currentFileName || !string.IsNullOrEmpty(taskOptions.MoveTo))
+                                            {
+                                                // get current and new path
+
+                                                currentPath = item["FileRef"].ToString().Replace("/" + currentFileName, "");
+                                                newPath = currentPath;
+                                                if (!string.IsNullOrEmpty(taskOptions.MoveTo))
+                                                {
+                                                    newPath = taskOptions.MoveTo;
+
+                                                    if (newPath.Contains("{"))
+                                                    {
+                                                        newPath = string.Format(newPath, fieldValues.ToArray());
+                                                    }
+
+                                                    if (!newPath.StartsWith("/"))
+                                                    {
+                                                        // new path is a sub folder
+                                                        newPath = currentPath + "/" + newPath;
+                                                    }
+
+                                                }
+
+                                            }
+                                            if (newFileName != currentFileName || newPath != currentPath)
+                                            {
+                                                #region rename or move file
+                                                try
+                                                {
+                                                    // move the file
+                                                    item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
+                                                    ctx.ExecuteQuery();
+                                                    log.Info("Moved '" + currentFileName + "' to '" + newFileName + "'");
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    log.Error("Error moving or renaming file", ex);
+                                                }
+
+
+                                                #endregion
+                                            }
+
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            log.Error("Exception renaing file: '" + listItems[0]["FileLeafRef"] + "'", ex);
+                                        }
+                                    }
+
+                                }
+                                else
+                                {
+                                    // this is not a file
+                                    log.Warn("Skipped because this is not a file!");
+                                }
+
+                            }
+
+
+                            log.Info("Finished task '" + taskOptions.Title + "'");
+
                         }
-
-
-                        log.Info("Finished task '" + taskOptions.Title +"'");
-
+                    
+                        loopCnt--;
+                        if (loopCnt > 0)
+                        {
+                            // delay next run
+                            if (runOptions.LoopDelay > 0)
+                            {
+                                log.Info("Delay next run for " + runOptions.LoopDelay + "sec");
+                                Thread.Sleep(runOptions.LoopDelay * 1000);
+                            }
+                        }
                     }
-
+ 
 
 
 
