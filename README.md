@@ -10,6 +10,7 @@ A simple commandline application to rename and move files in SharePoint document
 
 ## use cases
 Go through all files in a document library and update some fields (Title)
+
 ### Update title and filename in document by selected properties and Id
 - New documents in the library are named by Word-Online as "Document1", "Document2", ....
 
@@ -18,9 +19,6 @@ Go through all files in a document library and update some fields (Title)
 - The filenames should be named as "Concept(1)", 2Manual(2)", "Report(3)"
 
 You have to setup a filter for the documents to select only files starting with "Document" and query the ID and the category of the document. With this two query fields you can format the title "{1}({0})" and the filename. 
-
-
-
 
 ```xml
    <RunOptionsTask Id="0" Name="Rename Drafts" Enabled="true">
@@ -41,15 +39,59 @@ You have to setup a filter for the documents to select only files starting with 
       <UpdateFields>
         <UpdateFieldOptions Name="Title" Format="{1}({0})" />
       </UpdateFields>
-      <CheckinMessage>File Renamed</CheckinMessage>
+      <CheckinMessage>Draft File Renamed</CheckinMessage>
       <CheckinType>OverwriteCheckIn</CheckinType>
     </RunOptionsTask>
 
 ```
+## rename all not approved files in the library with DRAFT_ and a unique id
 
-### Rename all files by selection in a dropdwn field (category) and unique id
 ### Move all approved files to a subfolder selected by a managed metadata field
 ### Update a text property with the version of the document
+
+In your document library you have a text field "DocumentVersion" and have used it in word.exe as a field. This text-Field should be updated with the next published version.
+
+``` xml
+   <RunOptionsTask Id="0" Name="VersionUpdater" Enabled="false">
+      <LibraryName>Documents</LibraryName>
+      <CamlQuery>
+		            &lt;Where&gt;
+			            &lt;And&gt;
+				            &lt;Or&gt;
+					             &lt;Eq&gt;
+						            &lt;FieldRef Name='_ModerationStatus' /&gt;
+						            &lt;Value Type='ModStat'&gt;2&lt;/Value&gt;
+					             &lt;/Eq&gt;
+					             &lt;Eq&gt;
+						            &lt;FieldRef Name='_ModerationStatus' /&gt;
+						            &lt;Value Type='ModStat'&gt;3&lt;/Value&gt;
+					             &lt;/Eq&gt;
+ 				            &lt;/Or&gt;
+				            &lt;And&gt;
+					            &lt;Eq&gt;
+						            &lt;FieldRef Name='FSObjType' /&gt;
+						            &lt;Value Type='Integer'&gt;0&lt;/Value&gt;
+					             &lt;/Eq&gt;
+					            &lt;IsNull&gt;
+						            &lt;FieldRef Name='CheckoutUser' /&gt;
+					            &lt;/IsNull&gt;
+	 			            &lt;/And&gt;
+			            &lt;/And&gt;
+		            &lt;/Where&gt;	
+      </CamlQuery>
+      <QueryFields>
+        <QueryFieldOptions Name="_UIVersionString" ShouldNotBeNull="true" />
+      </QueryFields>
+      <UpdateFields>
+        <UpdateFieldOptions Name="DocumentVersion" Format="V{1}" />
+      </UpdateFields>
+      <CheckinMessage>Version Updated</CheckinMessage>
+      <CheckinType>OverwriteCheckIn</CheckinType>
+    </RunOptionsTask>
+ 
+```
+
+
 
 
 ## Update document propertivalue of dropes
