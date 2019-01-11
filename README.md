@@ -55,7 +55,7 @@ You have to setup a filter for the documents to select only files starting with 
 
 
 
-### Update a text property with the version of the document
+### Update a text property with the version of the document in all not approved files
 
 In your document library you have a text field "DocumentVersion" and have used it in word.exe as a field. This text-Field should be updated with the next published version.
 
