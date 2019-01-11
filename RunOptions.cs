@@ -8,35 +8,21 @@ using System.Xml.Serialization;
 
 namespace Webritter.SharePointFileRenamer
 {
-   
     public class RunOptions
     {
-
-        public int Id { get; set; }
-        public bool Enabled { get; set; }
+        // login informations
         public string Domain { get; set; }
         public string Username { get; set; }
         public string Password { get; set; }
         public string SiteUrl { get; set; }
-        public string LibraryName { get; set; }
-        public string CamlQuery { get; set; }
-        public string Scope { get; set; }
-        public string FileNameFormat { get; set; }
-        public List<QueryFieldOptions> QueryFields { get; set; }
-        public List<UpdateFieldOptions> UpdateFields { get; set; }
-        public string MoveTo { get; set; }
 
-        public string CheckinMessage { get; set; }
-        public CheckinType CheckinType { get; set; }
-        public string PublishInfo { get; set; }
-        public string ApproveInfo { get; set; }
-        public string WorkflowName { get; set; }
 
-        // constuctor
+        // tasks
+        public List<RunOptionsTask> Tasks { get; set; }
+
         public RunOptions()
         {
-            QueryFields =  new List<QueryFieldOptions>();
-            UpdateFields = new List<UpdateFieldOptions>();
+            Tasks = new List<RunOptionsTask>();
         }
 
         public static RunOptions LoadFromXMl(string xmlFileName)
@@ -52,7 +38,7 @@ namespace Webritter.SharePointFileRenamer
         // file load and save
         public void SaveAsXml(string xmlFileName)
         {
-              
+
             var writer = new System.Xml.Serialization.XmlSerializer(typeof(RunOptions));
             var wfile = new System.IO.StreamWriter(xmlFileName);
             writer.Serialize(wfile, this);
@@ -61,28 +47,42 @@ namespace Webritter.SharePointFileRenamer
 
         public static void GreateSampleXml(string filename)
         {
-            RunOptions sample = new RunOptions()
+            RunOptions sample = new RunOptions();
+
+            sample.SiteUrl = "https://communardodemo.sharepoint.com/sites/HelmutsSpielwiese";
+
+            // create renamer task    
+            RunOptionsTask renamer = new RunOptionsTask()
             {
+                Title = "Renamer",
                 Enabled = true,
-                SiteUrl = "https://sharepoint.identecsolutions.com/sites/WS0029",
-                Domain = "",
-                Username = "identec\\communardo",
-                Password = "secret",
-                LibraryName = "Product Customization",
+                LibraryName = "RenamerTest",
                 FileNameFormat = "PCF_{0:00000}",
                 CamlQuery = @"
-                            <Where>
-                                  <And>
-                                     <IsNull>
-                                        <FieldRef Name='identecDocumentStatus' />
-                                     </IsNull>
-                                     <Eq>
-                                        <FieldRef Name='FSObjType' />
-                                        <Value Type='Integer'>0</Value>
-                                     </Eq>
-                                  </And>
-                               </Where>",
-//                CamlQuery = "<Where><And><Eq><FieldRef Name='FileDirRef' /><Value Type='Text'>/sites/WS0029/Product Customization</Value></Eq><IsNull><FieldRef Name='identecDocumentStatus'/></IsNull></And></Where>",
+		            <Where>
+			            <And>
+				            <Or>
+					             <Eq>
+						            <FieldRef Name='_ModerationStatus' />
+						            <Value Type='ModStat'>2</Value>
+					             </Eq>
+					             <Eq>
+						            <FieldRef Name='_ModerationStatus' />
+						            <Value Type='ModStat'>3</Value>
+					             </Eq>
+ 				            </Or>
+				            <And>
+					            <Eq>
+						            <FieldRef Name='FSObjType' />
+						            <Value Type='Integer'>0</Value>
+					             </Eq>
+					            <IsNull>
+						            <FieldRef Name='CheckoutUser' />
+					            </IsNull>
+	 			            </And>
+			            </And>
+		            </Where>	
+                ",
                 QueryFields = new List<QueryFieldOptions>()
                 {
                     new QueryFieldOptions()
@@ -104,21 +104,90 @@ namespace Webritter.SharePointFileRenamer
                     },
                     new UpdateFieldOptions()
                     {
-                        FieldName = "identecDocumentStatus",
-                        Format = "Draft"
+                        FieldName = "DocumentVersion",
+                        Format = "V{1}"
                     }
 
                 },
 
-
-                CheckinMessage ="File Renamed",
+                CheckinMessage = "File Renamed",
                 CheckinType = CheckinType.OverwriteCheckIn,
                 PublishInfo = null,
                 ApproveInfo = null
 
             };
+
+            sample.Tasks.Add(renamer);
+
+
+
+            // create mover task
+            RunOptionsTask mover = new RunOptionsTask()
+            {
+                Title = "Mover",
+                Enabled = true,
+                LibraryName = "RenamerTest",
+                FileNameFormat = "PCF_{0:00000}",
+                CamlQuery = @"
+                    <Where>
+                        <Eq>
+                            <FieldRef Name='_ModerationStatus' />
+                            <Value ype='ModStat' >Approved</Value>
+                        </Eq>
+                    </Where>
+                ",
+                QueryFields = new List<QueryFieldOptions>()
+                {
+                    new QueryFieldOptions()
+                    {
+                        FieldName = "ID",
+                        ShouldNotBeNull = true
+                    },
+                     new QueryFieldOptions()
+                    {
+                        FieldName = "_UIVersionString"
+                    }
+                },
+                MoveTo = "final"
+            };
+
+            sample.Tasks.Add(mover);
+
             sample.SaveAsXml(filename);
         }
+
+
+
+    }
+    public class RunOptionsTask
+    {
+        [XmlAttribute("Id")]
+        public int Id { get; set; }
+        [XmlAttribute("Name")]
+        public string Title { get; set; }
+        [XmlAttribute("Enabled")]
+        public bool Enabled { get; set; }
+        public string LibraryName { get; set; }
+        public string CamlQuery { get; set; }
+        public string Scope { get; set; }
+        public string FileNameFormat { get; set; }
+        public List<QueryFieldOptions> QueryFields { get; set; }
+        public List<UpdateFieldOptions> UpdateFields { get; set; }
+        public string MoveTo { get; set; }
+
+        public string CheckinMessage { get; set; }
+        public CheckinType CheckinType { get; set; }
+        public string PublishInfo { get; set; }
+        public string ApproveInfo { get; set; }
+
+        // constuctor
+        public RunOptionsTask()
+        {
+            QueryFields =  new List<QueryFieldOptions>();
+            UpdateFields = new List<UpdateFieldOptions>();
+        }
+
+
     }
 
     public class QueryFieldOptions
