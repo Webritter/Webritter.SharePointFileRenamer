@@ -86,9 +86,11 @@ namespace Webritter.SharePointFileRenamer
                     {
                         if (!taskOptions.Enabled)
                         {
-                            log.Info("Skipped task beacuse task is disabled");
+                            log.Info("Skipped task '" + taskOptions.Title + "' because task is disabled");
                             continue;
                         }
+
+                        log.Info("Starting task '" + taskOptions.Title + "'");
 
                         // load the list of the document library
                         List spList = ctx.Web.Lists.GetByTitle(taskOptions.LibraryName);
@@ -243,8 +245,8 @@ namespace Webritter.SharePointFileRenamer
                                     }
                                 }
                                 #endregion
-                                string currentFileName = null;
-                                string newFileName = null;
+                                string currentFileName = currentFileName = item["FileLeafRef"].ToString(); ;
+                                string newFileName = currentFileName;
                                 if (!skip)
                                 {
                                     try
@@ -364,9 +366,7 @@ namespace Webritter.SharePointFileRenamer
                                             log.Info("Skipped item update because nothing is to change!");
                                         }
 
-                                        // find current and new file name
-                                        currentFileName = item["FileLeafRef"].ToString();
-                                        newFileName = currentFileName;
+                                        // find new file name
                                         if (!string.IsNullOrEmpty(taskOptions.FileNameFormat))
                                         {
                                             string extension = System.IO.Path.GetExtension(currentFileName);
@@ -437,6 +437,7 @@ namespace Webritter.SharePointFileRenamer
                         }
 
 
+                        log.Info("Finished task '" + taskOptions.Title +"'");
 
                     }
 

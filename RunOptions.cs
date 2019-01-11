@@ -51,6 +51,47 @@ namespace Webritter.SharePointFileRenamer
 
             sample.SiteUrl = "https://communardodemo.sharepoint.com/sites/HelmutsSpielwiese";
 
+            RunOptionsTask draftRenamer = new RunOptionsTask()
+            {
+                Title = "Draft Renamer",
+                Enabled = true,
+                LibraryName = "Documents",
+                FileNameFormat = "{1}({0})",
+                CamlQuery = @"
+		            <Where>
+			            <BeginsWith>
+                            <FieldRef Name='FileLeafRef' />
+                         <Value Type='File'<Document</Value>
+                        </BeginsWith>
+		            </Where>	
+                ",
+                QueryFields = new List<QueryFieldOptions>()
+                {
+                    new QueryFieldOptions()
+                    {
+                        FieldName = "ID",
+                        ShouldNotBeNull = true
+                    },
+                    new QueryFieldOptions()
+                    {
+                        FieldName = "Category",
+                        ShouldNotBeNull = true
+                     },
+                },
+                UpdateFields = new List<UpdateFieldOptions>()
+                {
+                    new UpdateFieldOptions()
+                    {
+                        FieldName = "Title",
+                        Format = "{1}({0})"
+                    }
+                },
+
+                CheckinMessage = "Draft File Renamed",
+                CheckinType = CheckinType.OverwriteCheckIn
+            };
+            sample.Tasks.Add(draftRenamer);
+
             // create renamer task    
             RunOptionsTask renamer = new RunOptionsTask()
             {
@@ -116,9 +157,7 @@ namespace Webritter.SharePointFileRenamer
                 ApproveInfo = null
 
             };
-
             sample.Tasks.Add(renamer);
-
 
 
             // create mover task
