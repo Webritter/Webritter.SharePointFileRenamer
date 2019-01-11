@@ -1,2 +1,4 @@
 # SharePointFileRenamer
-A application to automatically rename files in SharePoint document libraries. 
+A simple commandline application to rename and move files in SharePoint document libraries. 
+
+Featuren
