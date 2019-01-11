@@ -47,8 +47,6 @@ You have to setup a filter for the documents to select only files starting with 
     </RunOptionsTask>
 
 ```
-### rename all not approved files in the library with DRAFT_ and a unique id
-
 
 ### Move all approved files to a subfolder selected by a managed metadata field
 If there are approved files in the root folder, move them to the sub folders selected by a managed metadata property
@@ -119,8 +117,5 @@ In your document library you have a text field "DocumentVersion" and have used i
 ```
 
 
-
-
-## Update document propertivalue of dropes
 
 
