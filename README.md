@@ -51,7 +51,26 @@ You have to setup a filter for the documents to select only files starting with 
 
 
 ### Move all approved files to a subfolder selected by a managed metadata field
+If there are approved files in the root folder, move them to the sub folders selected by a managed metadata property
 
+```xml
+ <RunOptionsTask Id="0" Name="Approved Mover" Enabled="false">
+      <LibraryName>RenamerTest</LibraryName>
+      <CamlQuery>
+          &lt;Where&gt;
+              &lt;Eq&gt;
+                  &lt;FieldRef Name='_ModerationStatus' /&gt;
+                  &lt;Value ype='ModStat' &gt;Approved&lt;/Value&gt;
+              &lt;/Eq&gt;
+          &lt;/Where&gt;
+      </CamlQuery>
+      <QueryFields>
+        <QueryFieldOptions Name="Category" ShouldNotBeNull="false" />
+      </QueryFields>
+      <UpdateFields />
+      <MoveTo>{0}</MoveTo>
+    </RunOptionsTask>
+```
 
 
 
