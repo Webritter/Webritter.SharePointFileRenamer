@@ -70,10 +70,17 @@ namespace Webritter.SharePointFileRenamer
             //Create authentication array for site url,User Name,Password and Domain  
             try
             {
-                //SecureString password = GetSecureString(options.Password);
-                //Create the client context  
-                //using (var ctx = authenticationManager.GetNetworkCredentialAuthenticatedContext(options.SiteUrl, options.Username, password, options.Domain))
-                using (var ctx = authenticationManager.GetWebLoginClientContext(runOptions.SiteUrl))
+                ClientContext ctx = null;
+                if (runOptions.Username != null && runOptions.Password != null)
+                {
+                    SecureString password = GetSecureString(runOptions.Password);
+                    ctx = authenticationManager.GetNetworkCredentialAuthenticatedContext(runOptions.SiteUrl, runOptions.Username, password, runOptions.Domain);
+                }
+                else
+                {
+                    ctx = authenticationManager.GetWebLoginClientContext(runOptions.SiteUrl);
+                }
+                
                 {
                     Site site = ctx.Site;
                     ctx.Load(site);
@@ -457,13 +464,8 @@ namespace Webritter.SharePointFileRenamer
                             }
                         }
                     }
- 
-
-
-
-
-
                 }
+                ctx.Dispose();
             }
             catch (Exception ex)
             {
