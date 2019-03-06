@@ -187,15 +187,11 @@ namespace Webritter.SharePointFileRenamer
 
                             foreach (var field in taskOptions.QueryFields)
                             {
-                                viewFields += "<FieldRef " +
-                                    "Name='" + field.FieldName + "'" +
-                                    " />";
+                                viewFields += "<FieldRef Name='" + field.FieldName + "' />";
                             }
                             foreach (var field in taskOptions.UpdateFields)
                             {
-                                viewFields += "<FieldRef " +
-                                    "Name='" + field.FieldName + "'" +
-                                    " />";
+                                viewFields += "<FieldRef Name='" + field.FieldName + "' />";
                             }
 
                             viewFields += "</ViewFields>";
@@ -421,7 +417,7 @@ namespace Webritter.SharePointFileRenamer
                                                     // move the file
                                                     item.File.MoveTo(newPath + "/" + newFileName, MoveOperations.Overwrite);
                                                     ctx.ExecuteQuery();
-                                                    log.Info("Moved '" + currentFileName + "' to '" + newFileName + "'");
+                                                    log.Info("Moved '" + currentFileName + "' to '" + newPath + "/" + newFileName + "'");
                                                 }
                                                 catch (Exception ex)
                                                 {
